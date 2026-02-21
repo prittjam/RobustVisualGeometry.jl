@@ -1,0 +1,11 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+RobustVisualGeometry = "48970fad-9a21-401c-bf6c-679fa4f2bd7f"
+VisualGeometryCore = "297d53b8-c8d7-4cd7-a9af-68e656508a81"
+
+[sources]
+RobustVisualGeometry = {path = ".."}
+VisualGeometryCore = {path = "../../BlobBoards.jl/deps/VisualGeometryCore"}
+
+[compat]
+Documenter = "1"

@@ -1,0 +1,130 @@
+# RobustVisualGeometry.jl
+
+Robust estimation algorithms for geometric vision: M-estimation (IRLS) with pluggable loss functions, Graduated Non-Convexity (GNC) for high outlier rates, and RANSAC with pluggable quality functions and LO-RANSAC local optimization. Includes problem implementations for lines, conics, homographies, fundamental matrices, and P3P pose estimation.
+
+Depends on [VisualGeometryCore.jl](https://github.com/prittjam/VisualGeometryCore.jl) for geometry types, solvers, and loss/scale primitives.
+
+## Installation
+
+```julia
+using Pkg
+Pkg.add(url="https://github.com/prittjam/RobustVisualGeometry.jl")
+```
+
+## Quick Examples
+
+### RANSAC Homography
+
+```julia
+using RobustVisualGeometry
+using VisualGeometryCore: csponds, SA
+
+# Point correspondences (source → target)
+src = [SA[100.0, 200.0], SA[300.0, 150.0], ...]
+dst = [SA[112.0, 195.0], SA[310.0, 148.0], ...]
+
+# RANSAC with Cauchy loss and fixed inlier threshold
+problem = HomographyProblem(csponds(src, dst))
+scoring = ThresholdQuality(CauchyLoss(), 3.0, FixedScale())
+result = ransac(problem, scoring)
+
+H = result.value                          # 3×3 homography matrix
+inliers = result.inlier_mask              # BitVector
+println("Inliers: $(sum(inliers)) / $(length(inliers))")
+```
+
+### RANSAC Fundamental Matrix
+
+```julia
+problem = FundamentalMatrixProblem(csponds(src, dst))
+scoring = ThresholdQuality(CauchyLoss(), 1.0, FixedScale())
+result = ransac(problem, scoring)
+
+F = result.value                          # 3×3 fundamental matrix
+```
+
+### Robust Line Fitting
+
+```julia
+using VisualGeometryCore: Point2
+
+points = [Point2(1.0, 2.1), Point2(2.0, 4.0), ...]  # with outliers
+
+result = fit_line_ransac(points; σ=0.5, confidence=0.999)
+line = result.value       # Uncertain{Line2D} with covariance
+inliers = result.inlier_mask
+```
+
+### M-Estimation (IRLS)
+
+```julia
+# Weighted least squares with robust loss
+A = [1.0 0.0; 0.0 1.0; 1.0 1.0; 10.0 0.0]  # last row: outlier
+b = [1.0, 1.0, 2.0, 100.0]
+
+prob = LinearRobustProblem(A, b)
+result = robust_solve(prob, MEstimator(TukeyLoss()))
+
+x = result.value          # estimated parameters
+w = result.weights        # final IRLS weights (outlier → 0)
+```
+
+### Conic (Ellipse) Fitting
+
+```julia
+using VisualGeometryCore: Point2
+
+points = [Point2(x, y) for (x, y) in noisy_ellipse_data]
+
+# Robust Taubin → FNS two-phase fitting
+result = fit_conic_robust_taubin_fns(points; loss=GemanMcClureLoss())
+ellipse = conic_to_ellipse(result.value, result.scale)
+```
+
+## Architecture
+
+```
+AbstractEstimator
+├── MEstimator{L<:AbstractLoss}              IRLS solver
+└── GNCEstimator{G<:GNCLoss}                 Graduated Non-Convexity
+
+AbstractRobustProblem                        Generic robust optimization
+├── LinearRobustProblem                      Ax ≈ b with outliers
+├── ConicTaubinProblem / ConicFNSProblem     Conic fitting
+├── FMatTaubinProblem / FMatFNSProblem       F-matrix fitting
+└── RansacRefineProblem                      Wraps RANSAC problem for IRLS
+
+AbstractRansacProblem                        RANSAC problem interface
+├── LineFittingProblem / LoLineFittingProblem
+├── HomographyProblem / LoHomographyProblem
+├── FundamentalMatrixProblem / LoFundamentalMatrixProblem
+└── P3PProblem
+
+AbstractQualityFunction                      RANSAC quality scoring
+├── ThresholdQuality (MSAC)
+├── ChiSquareQuality
+├── MarginalQuality
+└── PredictiveMarginalQuality
+```
+
+### Key design decisions
+
+- **Pluggable quality functions**: RANSAC loop is quality-agnostic via trait dispatch
+- **Composable refinement**: NoRefinement / DltRefinement / IrlsRefinement
+- **Holy trait dispatch**: `SolverCardinality` (SingleSolution vs MultipleSolutions), `AbstractTestType` (BasicFTest vs PredictiveFTest)
+- **Uncertainty quantification**: Full covariance propagation through Hartley normalization
+
+## Documentation
+
+Full documentation available at `docs/build/index.html` after building:
+
+```bash
+julia --project=docs -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+julia --project=docs docs/make.jl
+```
+
+## Testing
+
+```bash
+julia --project=. -e 'using Pkg; Pkg.test()'
+```
