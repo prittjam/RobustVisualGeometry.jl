@@ -68,8 +68,6 @@ RANSAC refinement is composable via the `AbstractRefinement` trait:
 Local optimization (LO-RANSAC) is controlled via `AbstractLocalOptimization`:
 
 - `NoLocalOptimization` — no local optimization
-- `SimpleRefit` — refit on inliers
-- `FTestLocalOptimization` — iterative F-test based local optimization
 
 ## Holy Trait Dispatch
 
@@ -78,7 +76,6 @@ Key traits that control RANSAC behavior at compile time:
 | Trait | Values | Purpose |
 |-------|--------|---------|
 | `SolverCardinality` | `SingleSolution`, `MultipleSolutions` | Number of models per sample |
-| `AbstractTestType` | `BasicFTest`, `PredictiveFTest` | F-test variant for quality scoring |
 | `ConstraintType` | `Constrained`, `Unconstrained` | Whether the system needs SVD null-space |
 
 ## Dependency on VisualGeometryCore

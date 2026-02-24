@@ -19,7 +19,6 @@ using LinearAlgebra: LinearAlgebra, Diagonal, I, cond, norm, svd, dot,
                      eigen, Symmetric, diag, det, tr, pinv, cross
 using Statistics: median
 using StaticArrays: StaticArrays, SVector, SMatrix, @SMatrix, SA
-using Distributions: Distributions, Chisq, FDist, quantile
 using StructArrays: StructArrays
 using FixedSizeArrays: FixedSizeArrays, FixedSizeArray
 using Random: Random
@@ -48,6 +47,7 @@ import VisualGeometryCore: RotMatrix,
                            _fill_fundamental_dlt!,
                            _vec9_to_mat33,
                            _oriented_epipolar_check,
+                           _transfer_error_jacobian_wrt_h,
                            projection_transform
 
 # =============================================================================
@@ -102,19 +102,14 @@ export coef, residuals, weights, scale, converged, niter
 # -----------------------------------------------------------------------------
 export AbstractRansacProblem, FixedModels, RansacRefineProblem
 export AbstractRefinement, NoRefinement, DltRefinement, IrlsRefinement
-export AbstractQualityFunction, ThresholdQuality, ChiSquareQuality, TruncatedQuality
+export AbstractQualityFunction
 export AbstractMarginalQuality, MarginalQuality, PredictiveMarginalQuality
-export AbstractLocalOptimization, NoLocalOptimization, SimpleRefit, FTestLocalOptimization
+export AbstractLocalOptimization, NoLocalOptimization
 export default_local_optimization
 export AbstractStoppingStrategy, HypergeometricStopping, ScoreGapStopping, stopping_strategy
 export AbstractSampler, UniformSampler, ProsacSampler, sampler
 export RansacConfig, RansacEstimate, RansacAttributes
-export UncertainRansacAttributes, UncertainRansacEstimate
-export AbstractTestType, BasicFTest, PredictiveFTest, test_type
-export prediction_variances!
-export residual_jacobian, solver_jacobian
-export prediction_variances_from_cov!, prediction_fstats_from_cov!,
-       prediction_fstats_from_inliers!
+export residual_jacobian, solver_jacobian, measurement_logdets!, model_covariance
 export init_quality
 export ransac, inlier_ratio, codimension
 export SVDWorkspace, svd_nullvec!
@@ -212,7 +207,7 @@ include("gnc.jl")
 # RANSAC interface: abstract types, traits, workspace, config
 include("ransac_interface.jl")
 
-# Scoring: quality functions, F-tests, stopping strategies
+# Scoring: quality functions, stopping strategies
 include("scoring.jl")
 
 # RANSAC algorithm: main loop, scoring, adaptive trials

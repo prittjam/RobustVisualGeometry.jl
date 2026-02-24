@@ -144,7 +144,9 @@ end
 
             problem = HomographyProblem(cs)
             config = RansacConfig(; max_trials=10_000, confidence=0.9999, min_trials=100)
-            result = ransac(problem, ThresholdQuality(L2Loss(), 1e-4, FixedScale()); config)
+            # Use MarginalQuality with very small outlier halfwidth for noiseless data
+            scoring = MarginalQuality(data_size(problem), sample_size(problem), 1e-4)
+            result = ransac(problem, scoring; config)
 
             @test result.converged
             H_est = result.value
@@ -194,16 +196,10 @@ end
             shuffle!(rng, cs)
 
             problem = FundamentalMatrixProblem(cs)
-            # P(clean 7-pt sample) = ((1-ε)^7). At 75% outliers: (0.25)^7 ≈ 6e-5
-            # For 99.99% confidence: ceil(log(1e-4)/log(1-6e-5)) ≈ 150K trials
             config = RansacConfig(; max_trials=200_000, confidence=0.9999, min_trials=500)
-
-            # L2Loss with very tight threshold for noiseless data.
-            # True inliers have Sampson distance ~1e-15, outliers have ~O(1-100).
-            # Threshold in L2 loss units: inlier if r²/2 < thresh, i.e. r < sqrt(2*thresh).
-            # thresh=1e-8 → r < 1.4e-4 pixels — wide enough for machine precision,
-            # tight enough to exclude all outliers.
-            result = ransac(problem, ThresholdQuality(L2Loss(), 1e-8, FixedScale()); config)
+            # Use MarginalQuality with very small outlier halfwidth for noiseless data
+            scoring = MarginalQuality(data_size(problem), sample_size(problem), 1e-4)
+            result = ransac(problem, scoring; config)
 
             @test result.converged
             F_est = result.value

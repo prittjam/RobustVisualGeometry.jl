@@ -255,7 +255,7 @@ end
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, ThresholdQuality(CauchyLoss(), 3.0, FixedScale());
+        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000, min_trials=500))
 
         @test result.converged
@@ -282,7 +282,7 @@ end
             n_inliers=100, n_outliers=30, noise=0.3, seed=123)
         problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, ThresholdQuality(L2Loss(), 1.0, FixedScale());
+        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000))
 
         @test result.converged
@@ -296,7 +296,7 @@ end
             n_inliers=50, n_outliers=100, noise=0.5, seed=456)
         problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, ThresholdQuality(CauchyLoss(), 3.0, FixedScale());
+        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=10000, min_trials=1000))
 
         @test result.converged
@@ -354,7 +354,7 @@ end
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, ThresholdQuality(CauchyLoss(), 3.0, FixedScale());
+        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000, min_trials=500))
 
         @test result.converged
@@ -366,7 +366,7 @@ end
         source_pts, target_pts, _, _ = make_fundmat_data()
         problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, ThresholdQuality(CauchyLoss(), 3.0, FixedScale());
+        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000))
 
         @test result isa RansacEstimate

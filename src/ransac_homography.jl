@@ -11,7 +11,7 @@
 #
 # =============================================================================
 
-# Dependencies: VGC (homography_4pt, symmetric_transfer_error, etc.)
+# Dependencies: VGC (homography_4pt, _transfer_error_jacobian_wrt_h, etc.)
 #               All estimation types available from parent module
 
 using LinearAlgebra: det
@@ -43,7 +43,7 @@ HomographyProblem(cs; refinement=IrlsRefinement())     # LO-RANSAC (IRLS)
 # Solver Details
 - Minimal sample: 4 point pairs (`SingleSolution`)
 - Model type: `SMatrix{3,3,T,9}` (Frobenius-normalized, H[3,3] >= 0)
-- Residual: Symmetric transfer error
+- Residual: Sampson distance (EIV-corrected)
 - Degeneracy: Collinearity + convexity check
 - Refinement: Controlled by `R` type parameter
 """
@@ -95,6 +95,7 @@ sample_size(::HomographyProblem) = 4
 model_type(::HomographyProblem{T}) where T = SMatrix{3,3,T,9}
 solver_cardinality(::HomographyProblem) = SingleSolution()
 codimension(::HomographyProblem) = 2  # d_g = 2: two constraint equations from v̄ = λHū
+measurement_covariance(::HomographyProblem) = Heteroscedastic()
 
 function solve(p::HomographyProblem, idx::Vector{Int})
     u₁ = p.cs.first; u₂ = p.cs.second
@@ -106,7 +107,7 @@ end
 function residuals!(r::Vector, p::HomographyProblem{T}, H::SMatrix{3,3,T,9}) where T
     u₁ = p.cs.first; u₂ = p.cs.second
     @inbounds for i in eachindex(r, u₁, u₂)
-        r[i] = symmetric_transfer_error(u₁[i], u₂[i], H)
+        r[i] = _sampson_distance_homography(u₁[i], u₂[i], H)
     end
     return r
 end
@@ -139,23 +140,6 @@ end
 # =============================================================================
 
 constraint_type(::HomographyProblem) = Unconstrained()
-
-# Scale-fixing augmentation: add the λ₄=1 constraint row to make the
-# information matrix full rank (9×9 instead of rank-8).
-#
-# The constraint h₃ᵀũ = 1 (projective depth = 1 at the reference point)
-# adds the missing rank direction. The reference point is the first inlier.
-# Choice of reference doesn't affect prediction variances (scale-invariant).
-function _augment_info(p::HomographyProblem{T}, info, mask) where T
-    ref_idx = findfirst(mask)
-    isnothing(ref_idx) && return info
-    s_ref = p.cs.first[ref_idx]
-    # Scale-fixing row: ∂(h₃ᵀũ)/∂vec(H) in column-major order
-    # vec(H) = [H[1,1],H[2,1],H[3,1], H[1,2],H[2,2],H[3,2], H[1,3],H[2,3],H[3,3]]
-    # h₃ᵀũ = H[3,1]·s₁ + H[3,2]·s₂ + H[3,3]·1 → positions 3, 6, 9
-    c = SVector{9,T}(0, 0, s_ref[1], 0, 0, s_ref[2], 0, 0, one(T))
-    return info + c * c'
-end
 
 function weighted_system(p::HomographyProblem{T}, H, mask, w) where T
     k = _gather_cspond_inliers!(p, mask, w)
@@ -260,97 +244,254 @@ function solver_jacobian(p::HomographyProblem{T}, idx::Vector{Int},
 end
 
 # =============================================================================
-# residual_jacobian — Forward Transfer Error (2D residual, 2×9 Jacobian)
+# Sampson Error — Algebraic Constraint Formulation (Chum et al.)
+# =============================================================================
+#
+# For correspondence (s, d) = ((x,y), (x',y')) and homography H, the algebraic
+# constraint g = 0 encodes d̃ ∝ H·s̃:
+#
+#   g₁ = h₁ᵀs̃ − x'·h₃ᵀs̃
+#   g₂ = h₂ᵀs̃ − y'·h₃ᵀs̃
+#
+# The measurement Jacobian G_x (2×4) w.r.t. (x, y, x', y'):
+#   G_x = [ H[1,1]−x'H[3,1]   H[1,2]−x'H[3,2]   −c    0  ]
+#         [ H[2,1]−y'H[3,1]   H[2,2]−y'H[3,2]    0   −c  ]
+# where c = h₃ᵀs̃.
+#
+# The projected covariance (isotropic Σ_i = I₄):
+#   C_i = G_x G_xᵀ   (2×2 Sampson matrix)
+#
+# Sampson distance: d_S = sqrt(g' C⁻¹ g)
+# Whitened residual: r_w = L⁻¹g where LL' = C
+#
+# The model Jacobian G_θ (2×9) w.r.t. vec(H) (column-major):
+#   ∂g₁/∂vec(H) = [x, 0, −x'x,  y, 0, −x'y,  1, 0, −x']
+#   ∂g₂/∂vec(H) = [0, x, −y'x,  0, y, −y'y,  0, 1, −y']
+#
 # =============================================================================
 
+# --- 2×2 Cholesky and forward-substitution helpers ---
+
 """
-    residual_jacobian(p::HomographyProblem, H, i) -> (r::SVector{2}, G::SMatrix{2,9})
+    _cholesky2x2(a11, a21, a22) -> (l11, l21, l22)
 
-Forward transfer residual and its Jacobian w.r.t. vec(H).
-
-Returns:
-- `r = proj(H·[sᵢ;1]) - dᵢ` (2D forward residual vector)
-- `G = ∂r/∂vec(H)` (2×9 transfer error Jacobian)
-
-Note: `residuals!` returns scalar symmetric_transfer_error, but
-`residual_jacobian` returns the 2D forward-only vector — these are
-intentionally different (scoring uses symmetric, prediction uses forward).
+Cholesky factor of a 2×2 SPD matrix [[a11, a21]; [a21, a22]].
+Falls back to identity if degenerate.
 """
-function residual_jacobian(p::HomographyProblem{T},
-                                       H::SMatrix{3,3,T,9}, i::Int) where T
-    @inbounds begin
-        si = p.cs.first[i]
-        di = p.cs.second[i]
+@inline function _cholesky2x2(a11::T, a21::T, a22::T) where T
+    if a11 > eps(T)
+        l11 = sqrt(a11)
+        l21 = a21 / l11
+        diag2 = a22 - l21 * l21
+        l22 = diag2 > zero(T) ? sqrt(diag2) : zero(T)
+    else
+        l11 = one(T); l21 = zero(T); l22 = one(T)
     end
-
-    # Forward residual vector (2D)
-    h = H * SA[si[1], si[2], one(T)]
-    w = h[3]
-    inv_w = one(T) / w
-    r = SVector{2,T}(h[1] * inv_w - di[1], h[2] * inv_w - di[2])
-
-    # Transfer error Jacobian w.r.t. vec(H)  (2×9)
-    G = _transfer_error_jacobian_wrt_h(si, di, H)
-
-    return (r, G)
+    return (l11, l21, l22)
 end
 
-# =============================================================================
-# Transfer Jacobian w.r.t. Source Point (2×2)
-# =============================================================================
-
 """
-    _transfer_jacobian_wrt_source(H, s) -> SMatrix{2,2}
+    _solve_lower2x2(l11, l21, l22, b1, b2) -> (x1, x2)
 
-Jacobian of `proj(H · [s; 1])` w.r.t. the 2D source point `s`.
-
-Used to account for source-point noise in the information matrix (EIV model).
+Forward-substitution: solve L x = b for 2×2 lower-triangular L.
 """
-@inline function _transfer_jacobian_wrt_source(H::SMatrix{3,3,T,9},
-                                                s::SVector{2,T}) where T
-    s̃ = SA[s[1], s[2], one(T)]
-    Hs = H * s̃
-    w = Hs[3]
-    inv_w = one(T) / w
-    px = Hs[1] * inv_w
-    py = Hs[2] * inv_w
-    SMatrix{2,2,T}(
-        (H[1,1] - px * H[3,1]) * inv_w,
-        (H[2,1] - py * H[3,1]) * inv_w,
-        (H[1,2] - px * H[3,2]) * inv_w,
-        (H[2,2] - py * H[3,2]) * inv_w)
+@inline function _solve_lower2x2(l11::T, l21::T, l22::T, b1::T, b2::T) where T
+    x1 = b1 / l11
+    x2 = (b2 - l21 * x1) / l22
+    return (x1, x2)
 end
 
-# =============================================================================
-# EIV-corrected Information Matrix Accumulation
-# =============================================================================
-
 """
-    _accumulate_info(p::HomographyProblem, H, mask)
+    _solve_lower2x2_mat(l11, l21, l22, G::SMatrix{2,N,T}) -> SMatrix{2,N,T}
 
-EIV-corrected Fisher information for homography estimation.
-
-The forward transfer residual `r = proj(H·[s;1]) - d` has covariance
-`C_i = σ²(I₂ + J_s J_s')` when both source and destination have iid noise σ²I₂.
-The correct information contribution per point is `G'C̃⁻¹G` where `C̃ = C_i/σ²`.
-
-Without this correction, the information matrix overestimates precision by ~2×
-(it assumes only destination noise contributes to the residual variance).
+Forward-substitution: solve L X = G for 2×2 lower-triangular L, applied to
+each column of the 2×N matrix G.
 """
-function _accumulate_info(p::HomographyProblem{T},
-                                      H::SMatrix{3,3,T,9}, mask) where T
-    info = nothing
-    @inbounds for i in eachindex(mask)
-        if mask[i]
-            _, G = residual_jacobian(p, H, i)
-            si = p.cs.first[i]
-            J_s = _transfer_jacobian_wrt_source(H, si)
-            # Normalized residual covariance: C̃ = I₂ + J_s J_s'
-            C̃ = SMatrix{2,2,T}(I) + J_s * J_s'
-            contrib = G' * inv(C̃) * G
-            info = isnothing(info) ? contrib : info + contrib
+@inline function _solve_lower2x2_mat(l11::T, l21::T, l22::T,
+                                      G::SMatrix{2,N,T}) where {N,T}
+    inv_l11 = one(T) / l11
+    inv_l22 = one(T) / l22
+    # Build column-major tuple: for each column j, row1 then row2
+    vals = ntuple(Val(2N)) do k
+        j = (k - 1) >> 1 + 1  # column index (1-based)
+        row = ((k - 1) & 1) + 1
+        if row == 1
+            G[1, j] * inv_l11
+        else
+            (G[2, j] - l21 * G[1, j] * inv_l11) * inv_l22
         end
     end
-    isnothing(info) && return nothing
-    return _augment_info(p, info, mask)
+    return SMatrix{2,N,T}(vals)
+end
+
+# --- Core Sampson quantities ---
+
+"""
+    _sampson_quantities(H, s, d) -> (gᵢ, ∂ₓgᵢ, ∂θgᵢ)
+
+Compute the algebraic constraint gᵢ and its Jacobians (Section 3, Eq. 5-7).
+
+The constraint gᵢ = 0 encodes d̃ ∝ H·s̃ (dg = 2 equations):
+  g₁ = h₁ᵀs̃ − x'·h₃ᵀs̃
+  g₂ = h₂ᵀs̃ − y'·h₃ᵀs̃
+
+Returns:
+- gᵢ::SVector{2,T}     — constraint vector
+- ∂ₓgᵢ::SMatrix{2,4,T} — ∂gᵢ/∂xᵢ (measurement Jacobian, for Σ̃_{gᵢ} = ∂ₓgᵢ Σ̃_{xᵢ} (∂ₓgᵢ)ᵀ)
+- ∂θgᵢ::SMatrix{2,9,T} — ∂gᵢ/∂θ (model Jacobian, for estimation covariance, Eq. 7)
+"""
+@inline function _sampson_quantities(H::SMatrix{3,3,T,9},
+                                      s::SVector{2,T},
+                                      d::SVector{2,T}) where T
+    x, y = s[1], s[2]
+    xp, yp = d[1], d[2]
+
+    # h₃ᵀs̃ = H[3,1]*x + H[3,2]*y + H[3,3]
+    c = H[3,1] * x + H[3,2] * y + H[3,3]
+
+    # Algebraic constraint
+    g1 = (H[1,1] * x + H[1,2] * y + H[1,3]) - xp * c
+    g2 = (H[2,1] * x + H[2,2] * y + H[2,3]) - yp * c
+    g = SVector{2,T}(g1, g2)
+
+    # Measurement Jacobian G_x (2×4) w.r.t. (x, y, x', y')
+    gx_11 = H[1,1] - xp * H[3,1]
+    gx_12 = H[1,2] - xp * H[3,2]
+    gx_13 = -c
+    gx_21 = H[2,1] - yp * H[3,1]
+    gx_22 = H[2,2] - yp * H[3,2]
+    gx_24 = -c
+    G_x = SMatrix{2,4,T}(gx_11, gx_21,   # col 1: ∂g/∂x
+                          gx_12, gx_22,   # col 2: ∂g/∂y
+                          gx_13, zero(T), # col 3: ∂g/∂x'
+                          zero(T), gx_24) # col 4: ∂g/∂y'
+
+    # Model Jacobian G_θ (2×9) w.r.t. vec(H) column-major:
+    # vec(H) = [H[1,1],H[2,1],H[3,1], H[1,2],H[2,2],H[3,2], H[1,3],H[2,3],H[3,3]]
+    G_θ = SMatrix{2,9,T}(
+        x,       zero(T),  # col 1: ∂g/∂H[1,1], ∂g/∂H[2,1]
+        zero(T), x,        # col 2: ∂g/∂H[2,1]... wait, column-major
+        -xp*x,   -yp*x,    # col 3: ∂g/∂H[3,1]
+        y,       zero(T),  # col 4: ∂g/∂H[1,2]
+        zero(T), y,        # col 5: ∂g/∂H[2,2]
+        -xp*y,   -yp*y,    # col 6: ∂g/∂H[3,2]
+        one(T),  zero(T),  # col 7: ∂g/∂H[1,3]
+        zero(T), one(T),   # col 8: ∂g/∂H[2,3]
+        -xp,     -yp,      # col 9: ∂g/∂H[3,3]
+    )
+
+    return (g, G_x, G_θ)
+end
+
+"""
+    _sampson_distance_homography(s, d, H) -> T
+
+Scalar Sampson distance for a single homography correspondence.
+
+    d_S = sqrt(g' C⁻¹ g)
+
+where g is the algebraic constraint and C = G_x G_xᵀ (2×2).
+Uses inline 2×2 inverse for efficiency.
+"""
+@inline function _sampson_distance_homography(s::SVector{2,T}, d::SVector{2,T},
+                                               H::SMatrix{3,3,T,9}) where T
+    g, G_x, _ = _sampson_quantities(H, s, d)
+
+    # C = G_x G_xᵀ (2×2)
+    c11 = G_x[1,1]^2 + G_x[1,2]^2 + G_x[1,3]^2 + G_x[1,4]^2
+    c21 = G_x[2,1]*G_x[1,1] + G_x[2,2]*G_x[1,2] + G_x[2,3]*G_x[1,3] + G_x[2,4]*G_x[1,4]
+    c22 = G_x[2,1]^2 + G_x[2,2]^2 + G_x[2,3]^2 + G_x[2,4]^2
+
+    # Inline 2×2 inverse: C⁻¹ = (1/det) * [c22, -c21; -c21, c11]
+    det_c = c11 * c22 - c21 * c21
+    abs(det_c) < eps(T) && return typemax(T)
+    inv_det = one(T) / det_c
+
+    # g' C⁻¹ g
+    q = inv_det * (c22 * g[1]^2 - 2 * c21 * g[1] * g[2] + c11 * g[2]^2)
+    return sqrt(max(q, zero(T)))
+end
+
+# =============================================================================
+# residual_jacobian — Sampson-whitened (2D residual, 2×9 Jacobian)
+# =============================================================================
+
+"""
+    residual_jacobian(p::HomographyProblem, H, i) -> (rᵢ, ∂θgᵢ_w, ℓᵢ)
+
+Whitened constraint, whitened model Jacobian, and covariance penalty
+for correspondence `i` (Section 3.3, Eq. 7, 12, 21).
+
+For homography with isotropic noise (Σ̃_{xᵢ} = I):
+  Σ̃_{gᵢ}|_{Σ_θ=0} = (∂ₓgᵢ)(∂ₓgᵢ)ᵀ    (2×2, Sampson matrix)
+
+Returns `(rᵢ, ∂θgᵢ_w, ℓᵢ)` where:
+- `rᵢ = L⁻¹gᵢ` — whitened constraint (SVector{2}),
+  satisfies qᵢ = rᵢᵀrᵢ = gᵢᵀΣ̃_{gᵢ}⁻¹gᵢ (weighted squared residual)
+- `∂θgᵢ_w = L⁻¹∂θgᵢ` — whitened constraint Jacobian w.r.t. model (SMatrix{2,9}),
+  satisfies (∂θgᵢ_w)ᵀ(∂θgᵢ_w) = (∂θgᵢ)ᵀΣ̃_{gᵢ}⁻¹(∂θgᵢ) (Fisher information)
+- `ℓᵢ = log|Σ̃_{gᵢ}|` — covariance penalty for Algorithm 1 (Eq. 12)
+
+Here LLᵀ = Σ̃_{gᵢ}|_{Σ_θ=0} is the Cholesky factorization.
+"""
+function residual_jacobian(p::HomographyProblem{T},
+                           H::SMatrix{3,3,T,9}, i::Int) where T
+    @inbounds begin
+        sᵢ = p.cs.first[i]
+        dᵢ = p.cs.second[i]
+    end
+
+    gᵢ, ∂ₓgᵢ, ∂θgᵢ = _sampson_quantities(H, sᵢ, dᵢ)
+
+    # Σ̃_{gᵢ} = (∂ₓgᵢ)(∂ₓgᵢ)ᵀ  (2×2 Sampson matrix, isotropic noise)
+    c₁₁ = ∂ₓgᵢ[1,1]^2 + ∂ₓgᵢ[1,2]^2 + ∂ₓgᵢ[1,3]^2 + ∂ₓgᵢ[1,4]^2
+    c₂₁ = ∂ₓgᵢ[2,1]*∂ₓgᵢ[1,1] + ∂ₓgᵢ[2,2]*∂ₓgᵢ[1,2] + ∂ₓgᵢ[2,3]*∂ₓgᵢ[1,3] + ∂ₓgᵢ[2,4]*∂ₓgᵢ[1,4]
+    c₂₂ = ∂ₓgᵢ[2,1]^2 + ∂ₓgᵢ[2,2]^2 + ∂ₓgᵢ[2,3]^2 + ∂ₓgᵢ[2,4]^2
+
+    # Cholesky: LLᵀ = Σ̃_{gᵢ}
+    l₁₁, l₂₁, l₂₂ = _cholesky2x2(c₁₁, c₂₁, c₂₂)
+
+    # rᵢ = L⁻¹gᵢ  (whitened constraint)
+    rw₁, rw₂ = _solve_lower2x2(l₁₁, l₂₁, l₂₂, gᵢ[1], gᵢ[2])
+    rᵢ = SVector{2,T}(rw₁, rw₂)
+
+    # ∂θgᵢ_w = L⁻¹∂θgᵢ  (whitened model Jacobian)
+    ∂θgᵢ_w = _solve_lower2x2_mat(l₁₁, l₂₁, l₂₂, ∂θgᵢ)
+
+    # ℓᵢ = log|Σ̃_{gᵢ}| = log(det(L)²) = log(l₁₁² l₂₂²)
+    det_Σ̃ = c₁₁ * c₂₂ - c₂₁ * c₂₁
+    ℓᵢ = det_Σ̃ > zero(T) ? log(det_Σ̃) : zero(T)
+
+    return (rᵢ, ∂θgᵢ_w, ℓᵢ)
+end
+
+# =============================================================================
+# measurement_logdets! — Per-point log|C_i| for Algorithm 1 penalty
+# =============================================================================
+
+"""
+    measurement_logdets!(out, p::HomographyProblem, H)
+
+Per-point covariance penalty ℓᵢ = log|Σ̃_{gᵢ}| (Algorithm 1, Eq. 12).
+
+For homography with isotropic noise: Σ̃_{gᵢ} = (∂ₓgᵢ)(∂ₓgᵢ)ᵀ (2×2 Sampson matrix).
+
+Note: used only in Phase 3 of `_try_model!` (re-scoring after LO refit).
+Phase 1 computes ℓᵢ via `residual_jacobian` to avoid duplicate computation.
+"""
+function measurement_logdets!(out::AbstractVector, p::HomographyProblem{T},
+                              H::SMatrix{3,3,T,9}) where T
+    u₁ = p.cs.first; u₂ = p.cs.second
+    @inbounds for i in eachindex(out, u₁, u₂)
+        _, G_x, _ = _sampson_quantities(H, u₁[i], u₂[i])
+
+        # C = G_x G_xᵀ (2×2), det(C) = c11*c22 - c21²
+        c11 = G_x[1,1]^2 + G_x[1,2]^2 + G_x[1,3]^2 + G_x[1,4]^2
+        c21 = G_x[2,1]*G_x[1,1] + G_x[2,2]*G_x[1,2] + G_x[2,3]*G_x[1,3] + G_x[2,4]*G_x[1,4]
+        c22 = G_x[2,1]^2 + G_x[2,2]^2 + G_x[2,3]^2 + G_x[2,4]^2
+
+        det_c = c11 * c22 - c21 * c21
+        out[i] = det_c > zero(T) ? log(det_c) : zero(T)
+    end
+    return out
 end

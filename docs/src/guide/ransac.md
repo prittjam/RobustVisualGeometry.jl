@@ -60,13 +60,8 @@ Applied during the RANSAC loop to promising hypotheses:
 | Type | Description |
 |------|-------------|
 | `NoLocalOptimization()` | No local optimization |
-| `SimpleRefit()` | Refit on inlier set |
-| `FTestLocalOptimization()` | Iterative F-test local optimization |
 
 The `Lo` prefix variants (e.g., `LoHomographyProblem`) enable local optimization.
-
-See [F-Test Local Optimization](scoring.md#F-Test-Local-Optimization) in the Scoring Functions guide for details
-on the iterative F-test local optimization algorithm.
 
 ## Samplers
 
@@ -98,13 +93,9 @@ result.quality      # quality score
 result.trials       # number of RANSAC iterations used
 ```
 
-When using `FTestLocalOptimization` with `PredictiveFTest`, the result is an
-`UncertainRansacEstimate` with additional fields:
+Additional fields available from `RansacAttributes`:
 
 ```julia
-result.param_cov    # Σ_θ parameter covariance (SMatrix)
 result.scale        # s = √(RSS/ν)
 result.dof          # ν = n_inliers - p
 ```
-
-See [Post-Selection Inference](scoring.md#Post-Selection-Inference) in the Scoring Functions guide.

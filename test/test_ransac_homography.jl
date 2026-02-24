@@ -257,7 +257,7 @@ end
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, ThresholdQuality(CauchyLoss(), 3.0, FixedScale());
+        result = ransac(problem, MarginalQuality(problem, 50.0);
                         config=RansacConfig(max_trials=3000, min_trials=200))
 
         @test result.converged
@@ -280,7 +280,7 @@ end
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
         # L2 with tight threshold (MSAC truncation)
-        result = ransac(problem, ThresholdQuality(L2Loss(), 1.0, FixedScale());
+        result = ransac(problem, MarginalQuality(problem, 50.0);
                         config=RansacConfig(max_trials=3000))
 
         @test result.converged
@@ -294,7 +294,7 @@ end
             n_inliers=50, n_outliers=100, noise=0.5, seed=456)
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, ThresholdQuality(CauchyLoss(), 3.0, FixedScale());
+        result = ransac(problem, MarginalQuality(problem, 50.0);
                         config=RansacConfig(max_trials=5000, min_trials=500))
 
         @test result.converged
@@ -388,7 +388,7 @@ end
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, ThresholdQuality(CauchyLoss(), 3.0, FixedScale());
+        result = ransac(problem, MarginalQuality(problem, 50.0);
                         config=RansacConfig(max_trials=3000, min_trials=200))
 
         @test result.converged
@@ -403,7 +403,7 @@ end
         source_pts, target_pts, _, _ = make_homography_data()
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, ThresholdQuality(CauchyLoss(), 3.0, FixedScale());
+        result = ransac(problem, MarginalQuality(problem, 50.0);
                         config=RansacConfig(max_trials=2000))
 
         @test result isa RansacEstimate
@@ -494,7 +494,7 @@ end
         problem = HomographyProblem(scored)
         @test problem isa HomographyProblem{Float64, ProsacSampler}
 
-        result = ransac(problem, ThresholdQuality(CauchyLoss(), 3.0, FixedScale());
+        result = ransac(problem, MarginalQuality(problem, 50.0);
                         config=RansacConfig(max_trials=3000, min_trials=200))
 
         @test result.converged

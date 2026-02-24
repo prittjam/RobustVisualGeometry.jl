@@ -383,31 +383,11 @@ refine(p::AbstractRansacProblem, model, mask::BitVector,
        ::AbstractLoss, ::Real) = refine(p, model, mask)
 
 """
-    prediction_variances!(v, problem, model, mask, s2)
-
-Compute per-point prediction variances `vᵢ = s²(1 + gᵢ' Σ_θ gᵢ)` in-place.
-
-`v` is pre-allocated with length `data_size(problem)`. The function fills all
-elements (both inliers and outliers). For outliers, use the same formula —
-the F-test then determines whether their residual is consistent with the model.
-
-The parameter covariance `Σ_θ = s² · (J'J)⁻¹` is computed internally from the
-inlier-weighted constraint system. `s2` is the current residual variance estimate.
-
-Returns `(v, param_cov)` where `param_cov` is the `SMatrix{N,N}` parameter
-covariance, or `nothing` if the system is degenerate.
-
-Only called when `test_type(problem) == PredictiveFTest()`.
-"""
-function prediction_variances! end
-
-"""
     solver_jacobian(problem, sample_indices, model) -> NamedTuple or nothing
 
 Compute the Jacobian of the minimal solver evaluated at the given sample.
 
-Returns a problem-specific NamedTuple containing the Jacobian(s) and any
-auxiliary information needed by `prediction_variances_from_cov!`, or `nothing`
+Returns a problem-specific NamedTuple containing the Jacobian(s), or `nothing`
 if the problem does not support solver Jacobians.
 
 Default: `nothing` (problem does not provide solver Jacobian).
@@ -415,74 +395,77 @@ Default: `nothing` (problem does not provide solver Jacobian).
 solver_jacobian(::AbstractRansacProblem, ::Vector{Int}, _model) = nothing
 
 """
-    residual_jacobian(problem, model, i) -> (r, G)
+    measurement_logdets!(out, problem, model)
 
-Compute the residual and its Jacobian w.r.t. model parameters at data point `i`.
+Compute per-point covariance penalty ℓᵢ = log|Σ̃_{gᵢ}|_{Σ_θ=0}| (Eq. 12).
 
-Return types depend on the co-dimension `d_g = codimension(problem)`:
-- **d_g=1**: `(T, SVector{p,T})` — scalar residual `r`, gradient vector `G`
-- **d_g>1**: `(SVector{d_g,T}, SMatrix{d_g,p,T})` — vector residual `r`, Jacobian matrix `G`
+For each data point i, sets `out[i] = ℓᵢ` where Σ̃_{gᵢ} = ∂ₓgᵢ Σ̃_{xᵢ} (∂ₓgᵢ)ᵀ
+is the model-certain constraint covariance shape (Section 3.3).
 
-Used by the generic `prediction_fstats_from_cov!`, `prediction_fstats_from_inliers!`,
-and `prediction_variances_from_cov!` defaults. Problems that implement this method
-get prediction-corrected F-test support automatically.
+This penalty enters the covariance penalty term of Algorithm 1:
+    −½ Σᵢ∈I log|Σ̃_{gᵢ}| = −½ L   where L = Σᵢ∈I ℓᵢ
+
+Used in Phase 3 of `_try_model!` (re-scoring after local optimization).
+For Phase 1 scoring, the heteroscedastic path computes ℓᵢ directly via
+`residual_jacobian` to avoid duplicate computation.
+
+Default: fills `out` with zeros (correct for isotropic problems where
+Σ̃_{gᵢ} is constant and cancels in the sweep).
+"""
+function measurement_logdets!(out::AbstractVector, problem::AbstractRansacProblem, model)
+    fill!(out, zero(eltype(out)))
+    return out
+end
+
+"""
+    measurement_covariance(problem::AbstractRansacProblem) -> CovarianceStructure
+
+Return the measurement covariance structure trait for Σ̃_{xᵢ} (Section 3.3).
+
+This trait determines which `_fill_scores!` method is dispatched for
+model-certain scoring (`MarginalQuality`):
+
+- `Homoscedastic()`:   Σ̃_{xᵢ} = I for all i (isotropic, dg=1). ℓᵢ = 0.
+- `Heteroscedastic()`: Σ̃_{xᵢ} varies per point. ℓᵢ = log|Σ̃_{gᵢ}| via
+  `residual_jacobian`.
+
+The actual per-point covariance values are NOT returned by this function —
+they are computed inside `residual_jacobian(problem, model, i)` which
+returns the whitened quantities and ℓᵢ = log|Σ̃_{gᵢ}|.
+
+Default: `Homoscedastic()`.
+"""
+measurement_covariance(::AbstractRansacProblem) = Homoscedastic()
+
+"""
+    residual_jacobian(problem, model, i) -> (rᵢ, ∂θgᵢ_w, ℓᵢ)
+
+Whitened constraint, whitened model Jacobian, and measurement covariance
+log-determinant at data point `i` (Section 3, Eq. 5-7, 12).
+
+Returns a 3-tuple where:
+
+- `rᵢ = L⁻¹gᵢ` — whitened constraint (Cholesky: LLᵀ = Σ̃_{gᵢ}|_{Σ_θ=0}).
+  Satisfies `rᵢᵀrᵢ = gᵢᵀ Σ̃_{gᵢ}⁻¹ gᵢ = qᵢ` (weighted squared residual).
+  For dg=1: this equals the signed Sampson residual rᵢ = gᵢ/√cᵢ (Eq. 21-22).
+- `∂θgᵢ_w = L⁻¹ ∂θgᵢ` — whitened constraint Jacobian w.r.t. model θ.
+  Satisfies `(∂θgᵢ_w)ᵀ(∂θgᵢ_w) = (∂θgᵢ)ᵀ Σ̃_{gᵢ}⁻¹ (∂θgᵢ)` (Fisher information).
+- `ℓᵢ = log|Σ̃_{gᵢ}|_{Σ_θ=0}|` — covariance penalty for Algorithm 1 (Eq. 12).
+  This is the measurement-only part of log|Σ̃_{gᵢ}|.
+
+Return shapes depend on the codimension dg = codimension(problem):
+- **dg=1** (line, F-matrix): `(T, SVector{n_θ,T}, T)`
+- **dg≥2** (homography):     `(SVector{dg,T}, SMatrix{dg,n_θ,T}, T)`
+
+For isotropic problems (Σ̃_{xᵢ} = I, dg=1), ℓᵢ = 0 (the constant cᵢ cancels
+in Algorithm 1). For heteroscedastic problems (varying Σ̃_{xᵢ}), ℓᵢ varies
+per point and must be included in the covariance penalty sum L = Σᵢ∈I ℓᵢ.
+
+Callers needing only `(rᵢ, ∂θgᵢ_w)` can destructure as `r, G = residual_jacobian(...)`.
 
 Default: not implemented (will error if called without a problem-specific method).
 """
 function residual_jacobian end
-
-"""
-    prediction_variances_from_cov!(pred_var, problem, model, jac_info, s2) -> pred_var
-
-Compute per-point prediction variances from a solver Jacobian result.
-
-Given `jac_info` (from `solver_jacobian`) and current noise estimate `s2`,
-fills `pred_var[i]` with the prediction variance for each data point.
-
-Called by `_try_model!` inside the RANSAC main loop for solver-Jacobian scoring.
-"""
-function prediction_variances_from_cov! end
-
-"""
-    prediction_fstats_from_cov!(fstats, problem, model, jac_info, s2) -> fstats
-
-Compute per-point F-statistics using the solver Jacobian prediction covariance.
-
-For each data point i, computes:
-    F_i = rᵢᵀ Vᵢ⁻¹ rᵢ / d_g
-
-where:
-- `rᵢ` is the d_g-dimensional residual vector at point i
-- `Vᵢ = s² I + Jᵢ Σ_θ Jᵢᵀ` is the d_g×d_g prediction covariance
-- `Σ_θ = s² Jf Jfᵀ` is the parameter covariance from the solver Jacobian
-- `d_g = codimension(problem)` is the co-dimension of the model manifold
-
-The F-statistic F_i ~ F(d_g, ν) under H₀ (inlier), enabling Mahalanobis-based
-inlier classification with per-point thresholds that account for geometric
-conditioning of the minimal sample.
-"""
-function prediction_fstats_from_cov! end
-
-"""
-    prediction_fstats_from_inliers!(fstats, problem, model, mask, s2)
-        -> (fstats, param_cov) or nothing
-
-Compute per-point F-statistics using the **inlier-based** parameter covariance.
-
-Unlike `prediction_fstats_from_cov!` (which uses the minimal solver Jacobian),
-this function computes `Σ_θ = s² · (Σᵢ Jᵢᵀ Jᵢ)⁻¹` from the residual Jacobian
-over all inlier points (the OLS / Gauss-Newton covariance). This gives the
-correct prediction variance for the fitted model, not the minimal sample.
-
-Used by `_finalize` for the final F-test reclassification.
-
-Returns `(fstats, param_cov)` where `param_cov` is the parameter covariance
-matrix, or `nothing` if the problem does not support this computation.
-
-Default: returns `nothing` for problems that do not implement `residual_jacobian`.
-Generic implementation (using `residual_jacobian`) is in ransac.jl.
-"""
-function prediction_fstats_from_inliers! end
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -583,77 +566,6 @@ Return the fraction of data points classified as inliers.
 inlier_ratio(r::RansacEstimate) = sum(r.inlier_mask) / length(r.inlier_mask)
 
 # -----------------------------------------------------------------------------
-# UncertainRansacAttributes — RansacAttributes + parameter covariance
-# -----------------------------------------------------------------------------
-
-"""
-    UncertainRansacAttributes{T, N} <: AbstractAttributes
-
-RANSAC attributes with parameter covariance for uncertainty propagation.
-
-Extends [`RansacAttributes`](@ref) with an `N×N` parameter covariance matrix,
-enabling downstream uncertainty propagation (e.g., covariance of reprojected
-points, uncertainty of estimated poses).
-
-# Type Parameters
-- `T`: Element type (typically `Float64`)
-- `N`: Number of model degrees of freedom (e.g., 8 for homography, 7 for F-matrix)
-
-# Additional Fields (beyond RansacAttributes)
-- `param_cov::SMatrix{N,N,T}`: Parameter covariance matrix `Σ_θ = s² · (J'J)⁻¹`
-
-# Constructor
-    UncertainRansacAttributes(base::RansacAttributes, param_cov::SMatrix{N,N,T})
-
-Promote a `RansacAttributes` to uncertain by attaching a covariance matrix.
-
-# Example
-```julia
-result = ransac(problem; outlier_halfwidth=50.0)
-# ... compute Σ_θ from weighted system ...
-uncertain_attrs = UncertainRansacAttributes(result.attributes, Σ_θ)
-uncertain_result = Attributed(result.value, uncertain_attrs)
-
-# Access everything the same way
-uncertain_result.converged     # from attributes
-uncertain_result.param_cov     # the covariance matrix
-uncertain_result.scale         # noise scale s
-uncertain_result.dof           # degrees of freedom ν
-```
-"""
-struct UncertainRansacAttributes{T, N} <: AbstractAttributes
-    stop_reason::Symbol
-    converged::Bool
-    inlier_mask::BitVector
-    residuals::Vector{T}
-    weights::Vector{T}
-    quality::T
-    scale::T
-    dof::Int
-    trials::Int
-    sample_acceptance_rate::Float64
-    param_cov::SMatrix{N,N,T}
-end
-
-function UncertainRansacAttributes(base::RansacAttributes{T}, param_cov::SMatrix{N,N,T}) where {T, N}
-    UncertainRansacAttributes{T, N}(
-        base.stop_reason, base.converged, base.inlier_mask, base.residuals,
-        base.weights, base.quality, base.scale, base.dof, base.trials,
-        base.sample_acceptance_rate, param_cov)
-end
-
-"""
-    UncertainRansacEstimate{M, T, N}
-
-Type alias for `Attributed{M, UncertainRansacAttributes{T, N}}`.
-
-See also: [`UncertainRansacAttributes`](@ref), [`RansacEstimate`](@ref)
-"""
-const UncertainRansacEstimate{M, T, N} = Attributed{M, UncertainRansacAttributes{T, N}}
-
-inlier_ratio(r::UncertainRansacEstimate) = sum(r.inlier_mask) / length(r.inlier_mask)
-
-# -----------------------------------------------------------------------------
 # Workspace (Pre-allocated Buffers)
 # -----------------------------------------------------------------------------
 
@@ -679,6 +591,7 @@ mutable struct RansacWorkspace{M, T<:AbstractFloat}
     # Scoring buffers (length = data_size)
     residuals::Vector{T}
     scores::Vector{T}
+    penalties::Vector{T}
     mask::BitVector
     # Best-so-far (mutated in-place)
     best_model::M
@@ -696,6 +609,7 @@ function RansacWorkspace(n::Int, k::Int, ::Type{M}, ::Type{T}=Float64) where {M,
     RansacWorkspace{M,T}(
         Vector{T}(undef, n),
         Vector{T}(undef, n),
+        zeros(T, n),
         falses(n),
         Ref{M}()[],
         Vector{T}(undef, n),

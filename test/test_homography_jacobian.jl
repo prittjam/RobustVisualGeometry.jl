@@ -4,6 +4,8 @@ using StaticArrays
 using Random
 using ForwardDiff
 using VisualGeometryCore
+using RobustVisualGeometry
+using RobustVisualGeometry: residual_jacobian, _sq_norm, _sampson_distance_homography
 
 # =============================================================================
 # Test Utilities
@@ -160,6 +162,88 @@ end
                                  H[1,3], H[2,3], H[3,3])
         G_ad = ForwardDiff.jacobian(hv -> _te_vec_ad(hv, s, d), collect(h0))
         @test maximum(abs.(Matrix(G) - G_ad)) < 1e-8
+    end
+
+    # =================================================================
+    # residual_jacobian — ForwardDiff verification (Section 3, Eq. 7)
+    # =================================================================
+
+    @testset "residual_jacobian — ∂θgᵢ ForwardDiff verification" begin
+        # Autodiff reference: constraint gᵢ(vec(H)) for fixed (s, d)
+        function _constraint_ad(hv::AbstractVector{T}, s, d) where T
+            H = SMatrix{3,3,T}(hv[1], hv[2], hv[3], hv[4], hv[5], hv[6],
+                                hv[7], hv[8], hv[9])
+            x, y = T(s[1]), T(s[2])
+            xp, yp = T(d[1]), T(d[2])
+            c = H[3,1]*x + H[3,2]*y + H[3,3]
+            g1 = (H[1,1]*x + H[1,2]*y + H[1,3]) - xp*c
+            g2 = (H[2,1]*x + H[2,2]*y + H[2,3]) - yp*c
+            SVector{2,T}(g1, g2)
+        end
+
+        # Autodiff reference: constraint gᵢ(xᵢ) for fixed H
+        function _constraint_x_ad(xv::AbstractVector{T}, H) where T
+            x, y, xp, yp = xv[1], xv[2], xv[3], xv[4]
+            c = T(H[3,1])*x + T(H[3,2])*y + T(H[3,3])
+            g1 = (T(H[1,1])*x + T(H[1,2])*y + T(H[1,3])) - xp*c
+            g2 = (T(H[2,1])*x + T(H[2,2])*y + T(H[2,3])) - yp*c
+            SVector{2,T}(g1, g2)
+        end
+
+        rng = MersenneTwister(77)
+        H_true = @SMatrix [
+             0.95  -0.10  15.0;
+             0.12   0.93  -8.0;
+             1e-4   2e-4   1.0
+        ]
+        H_true = H_true / norm(H_true)
+        if H_true[3,3] < 0; H_true = -H_true; end
+
+        # Generate 10 correspondences (HomographyProblem requires ≥ 4)
+        n_pts = 10
+        src_pts = [SA[100.0 + 700.0*rand(rng), 100.0 + 500.0*rand(rng)] for _ in 1:n_pts]
+        dst_pts = [apply_H(H_true, s) + SA[2.0*randn(rng), 2.0*randn(rng)] for s in src_pts]
+        cs = [src_pts[i] => dst_pts[i] for i in 1:n_pts]
+        prob = HomographyProblem(cs)
+
+        for trial in 1:n_pts
+            s = src_pts[trial]
+            d = dst_pts[trial]
+
+            # Compute via our function
+            rᵢ, ∂θgᵢ_w, ℓᵢ = residual_jacobian(prob, H_true, trial)
+
+            # --- Verify ∂θgᵢ via ForwardDiff ---
+            h0 = collect(SVector{9,Float64}(
+                H_true[1,1], H_true[2,1], H_true[3,1],
+                H_true[1,2], H_true[2,2], H_true[3,2],
+                H_true[1,3], H_true[2,3], H_true[3,3]))
+            ∂θg_ad = ForwardDiff.jacobian(hv -> _constraint_ad(hv, s, d), h0)
+
+            # --- Verify ∂ₓgᵢ via ForwardDiff ---
+            x0 = collect(SVector{4,Float64}(s[1], s[2], d[1], d[2]))
+            ∂ₓg_ad = ForwardDiff.jacobian(xv -> _constraint_x_ad(xv, H_true), x0)
+
+            # Compute Σ̃_{gᵢ} = (∂ₓgᵢ)(∂ₓgᵢ)ᵀ and its Cholesky
+            Σ̃_g = ∂ₓg_ad * ∂ₓg_ad'
+            L = cholesky(Symmetric(Σ̃_g)).L
+
+            # Verify whitened model Jacobian: ∂θgᵢ_w = L⁻¹∂θgᵢ
+            ∂θg_w_expected = L \ ∂θg_ad
+            @test maximum(abs.(Matrix(∂θgᵢ_w) - ∂θg_w_expected)) < 1e-8
+
+            # Verify whitened constraint: rᵢ = L⁻¹gᵢ
+            gᵢ = _constraint_ad(h0, s, d)
+            r_expected = L \ gᵢ
+            @test maximum(abs.(rᵢ - r_expected)) < 1e-8
+
+            # Verify qᵢ = rᵢᵀrᵢ = Sampson distance²
+            sampson_d = _sampson_distance_homography(s, d, H_true)
+            @test abs(_sq_norm(rᵢ) - sampson_d^2) < 1e-8
+
+            # Verify ℓᵢ = log|Σ̃_{gᵢ}|
+            @test abs(ℓᵢ - log(det(Σ̃_g))) < 1e-8
+        end
     end
 
 end

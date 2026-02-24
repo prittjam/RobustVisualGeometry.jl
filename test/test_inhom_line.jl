@@ -3,11 +3,11 @@ using LinearAlgebra
 using StaticArrays
 using Random
 using ForwardDiff
-using Distributions: FDist, quantile
 using VisualGeometryCore
 using RobustVisualGeometry
-using RobustVisualGeometry: MarginalQuality, FTestLocalOptimization,
-    PredictiveFTest, RansacConfig, UncertainRansacAttributes, ransac
+using RobustVisualGeometry: MarginalQuality, PredictiveMarginalQuality, RansacConfig, ransac,
+    Homoscedastic, Heteroscedastic, _fill_scores!, _sq_norm, RansacWorkspace,
+    data_size, sample_size, model_type, residual_jacobian
 
 # =============================================================================
 # ForwardDiff reference: inhomogeneous line solver
@@ -60,65 +60,7 @@ end
         end
     end
 
-    @testset "prediction_fstats — manual verification" begin
-        # y = 2 + 3x, points on the line + noise
-        a_true, b_true = 2.0, 3.0
-        rng = MersenneTwister(123)
-
-        # Two sample points (exact)
-        p1 = SA[1.0, a_true + b_true * 1.0]
-        p2 = SA[4.0, a_true + b_true * 4.0]
-
-        # Test point: on line (should have small F-stat)
-        p_on = SA[2.5, a_true + b_true * 2.5]
-        # Test point: off line (should have large F-stat)
-        p_off = SA[2.5, a_true + b_true * 2.5 + 10.0]
-
-        pts = [p1, p2, p_on, p_off]
-        prob = InhomLineFittingProblem(pts)
-        idx = [1, 2]
-
-        model = solve(prob, idx)
-        jac_info = solver_jacobian(prob, idx, model)
-
-        s2 = 1.0  # noise variance
-        fstats = zeros(4)
-        prediction_fstats_from_cov!(fstats, prob, model, jac_info, s2)
-
-        # Points on line should have F-stat ≈ 0
-        @test fstats[1] < 1e-10  # sample point 1
-        @test fstats[2] < 1e-10  # sample point 2
-        @test fstats[3] < 1e-10  # on-line test point
-
-        # Point far off line should have large F-stat
-        @test fstats[4] > 10.0
-    end
-
-    @testset "prediction_fstats — leverage effect" begin
-        # y = 0 + 1·x, sample at x=0, x=1
-        p1 = SA[0.0, 0.0]
-        p2 = SA[1.0, 1.0]
-
-        # Test at x=0.5 (low leverage) and x=100 (high leverage)
-        p_low = SA[0.5, 0.5 + 0.1]   # small residual, low leverage
-        p_high = SA[100.0, 100.0 + 0.1]  # same residual, high leverage
-
-        pts = [p1, p2, p_low, p_high]
-        prob = InhomLineFittingProblem(pts)
-        idx = [1, 2]
-        model = solve(prob, idx)
-        jac_info = solver_jacobian(prob, idx, model)
-
-        s2 = 0.01  # small noise
-        fstats = zeros(4)
-        prediction_fstats_from_cov!(fstats, prob, model, jac_info, s2)
-
-        # High-leverage point should have SMALLER F-stat than low-leverage
-        # because V_i is larger (more uncertainty from the model at x=100)
-        @test fstats[4] < fstats[3]  # high leverage → larger V → smaller F
-    end
-
-    @testset "MarginalQuality + FTestLocalOptimization — end-to-end" begin
+    @testset "MarginalQuality — end-to-end" begin
         rng = MersenneTwister(999)
 
         # True line: y = 5 + 2x
@@ -140,24 +82,22 @@ end
         prob = InhomLineFittingProblem(pts)
 
         scoring = MarginalQuality(n, 2, 50.0; codimension=1)
-        local_optimization = FTestLocalOptimization(PredictiveFTest(), 0.01, 5)
         config = RansacConfig(; max_trials=500, confidence=0.999)
 
-        result = ransac(prob, scoring; local_optimization, config)
+        result = ransac(prob, scoring; config)
 
         # Check model accuracy
         model = result.value
         @test abs(model[1] - a_true) < 1.0  # intercept
         @test abs(model[2] - b_true) < 0.5  # slope
 
-        # Check we got an uncertain result with param_cov
         attrs = result.attributes
-        @test attrs isa UncertainRansacAttributes
+        @test attrs isa RansacAttributes
 
         # Inlier ratio should be reasonable
-        inlier_ratio = sum(attrs.inlier_mask) / n
-        @test inlier_ratio > 0.5
-        @test inlier_ratio < 0.95  # shouldn't include all outliers
+        ir = sum(attrs.inlier_mask) / n
+        @test ir > 0.5
+        @test ir < 0.95  # shouldn't include all outliers
 
         # Most inliers should be in the first n_inliers points
         n_correct_inliers = sum(attrs.inlier_mask[1:n_inliers])
@@ -167,17 +107,51 @@ end
         n_false_inliers = sum(attrs.inlier_mask[n_inliers+1:end])
         @test n_false_inliers <= 10
 
-        # param_cov should be PSD
-        Σ = attrs.param_cov
-        @test size(Σ) == (2, 2)
-        @test all(eigvals(Symmetric(Matrix(Σ))) .>= -1e-10)
-
         # Scale estimate should be reasonable
         @test attrs.scale > 0
         @test attrs.scale < 2.0 * noise
     end
 
-    @testset "F-test mask vs raw k* mask — different inlier counts" begin
+    @testset "Problem-aware constructors" begin
+        pts = [SA[Float64(i), 2.0 + 3.0 * i] for i in 1:50]
+        prob = InhomLineFittingProblem(pts)
+
+        # MarginalQuality(problem, a)
+        mq = MarginalQuality(prob, 50.0)
+        mq_manual = MarginalQuality(50, 2, 50.0; codimension=1)
+        @test mq.log2a == mq_manual.log2a
+        @test mq.model_dof == mq_manual.model_dof
+        @test mq.codimension == mq_manual.codimension
+        @test length(mq.perm) == length(mq_manual.perm)
+        @test length(mq.lg_table) == length(mq_manual.lg_table)
+
+        # PredictiveMarginalQuality(problem, a)
+        pmq = PredictiveMarginalQuality(prob, 30.0)
+        pmq_manual = PredictiveMarginalQuality(50, 2, 30.0; codimension=1)
+        @test pmq.log2a == pmq_manual.log2a
+        @test pmq.model_dof == pmq_manual.model_dof
+        @test pmq.codimension == pmq_manual.codimension
+        @test length(pmq.perm) == length(pmq_manual.perm)
+        @test length(pmq.lg_table) == length(pmq_manual.lg_table)
+
+        # Homography problem has different codimension
+        cs = [SA[1.0, 2.0] => SA[3.0, 4.0],
+              SA[5.0, 6.0] => SA[7.0, 8.0],
+              SA[9.0, 10.0] => SA[11.0, 12.0],
+              SA[13.0, 14.0] => SA[15.0, 16.0],
+              SA[17.0, 18.0] => SA[19.0, 20.0]]
+        hprob = HomographyProblem(cs)
+        hmq = MarginalQuality(hprob, 50.0)
+        @test hmq.model_dof == 4  # sample_size
+        @test hmq.codimension == 2
+        @test length(hmq.perm) == 5
+
+        hpmq = PredictiveMarginalQuality(hprob, 50.0)
+        @test hpmq.model_dof == 4
+        @test hpmq.codimension == 2
+    end
+
+    @testset "PredictiveMarginalQuality — end-to-end" begin
         rng = MersenneTwister(777)
 
         # Line y = 0 + 1x, sample at x=0 and x=0.1 (close together → ill-conditioned)
@@ -203,16 +177,78 @@ end
 
         n = length(pts)
         prob = InhomLineFittingProblem(pts)
-        scoring = MarginalQuality(n, 2, 30.0; codimension=1)
-        local_optimization = FTestLocalOptimization(PredictiveFTest(), 0.01, 5)
+        scoring = PredictiveMarginalQuality(n, 2, 30.0; codimension=1)
         config = RansacConfig(; max_trials=500, confidence=0.999)
 
-        result = ransac(prob, scoring; local_optimization, config)
-        @test result.attributes isa UncertainRansacAttributes
+        result = ransac(prob, scoring; config)
+        @test result.attributes isa RansacAttributes
 
-        # Verify the F-test mask is meaningful
+        # Verify the mask is meaningful
         mask = result.attributes.inlier_mask
         @test sum(mask) >= 20  # at least the dense cluster
+    end
+
+    @testset "Scoring consistency: Homoscedastic ≡ Heteroscedastic when cᵢ = const" begin
+        # For InhomLineFittingProblem (dg=1, Σ̃_{xᵢ} = I), the projected scalar
+        # variance cᵢ = 1 for all i (constant). The Heteroscedastic path through
+        # residual_jacobian should produce:
+        #   qᵢ = rᵢ² (same as Homoscedastic)
+        #   ℓᵢ = 0   (same as Homoscedastic)
+        # This validates that the two paths are consistent (Section 3.3).
+
+        rng = MersenneTwister(555)
+        a_true, b_true = 3.0, -1.5
+        pts = [SA[Float64(x), a_true + b_true * x + 0.5 * randn(rng)] for x in 1:30]
+        prob = InhomLineFittingProblem(pts)
+
+        # Fit model from first two points
+        model = solve(prob, [1, 2])
+        @test !isnothing(model)
+
+        n = data_size(prob)
+        scoring = MarginalQuality(prob, 50.0)
+
+        # --- Homoscedastic path ---
+        ws_h = RansacWorkspace(n, sample_size(prob), model_type(prob))
+        _fill_scores!(ws_h, prob, scoring, model, Homoscedastic())
+
+        # --- Heteroscedastic path ---
+        ws_het = RansacWorkspace(n, sample_size(prob), model_type(prob))
+        _fill_scores!(ws_het, prob, scoring, model, Heteroscedastic())
+
+        # Scores qᵢ should be identical
+        @test ws_h.scores ≈ ws_het.scores atol=1e-12
+
+        # Penalties ℓᵢ should both be zero (cᵢ = 1 → log(1) = 0)
+        @test all(x -> abs(x) < 1e-12, ws_h.penalties)
+        @test all(x -> abs(x) < 1e-12, ws_het.penalties)
+
+        # Residual magnitudes should match (Heteroscedastic stores √qᵢ ≥ 0,
+        # Homoscedastic preserves signed residuals from residuals!)
+        @test abs.(ws_h.residuals) ≈ ws_het.residuals atol=1e-12
+    end
+
+    @testset "residual_jacobian — 3-tuple return verification" begin
+        pts = [SA[1.0, 5.0], SA[3.0, -1.0], SA[0.5, 3.5]]
+        prob = InhomLineFittingProblem(pts)
+        model = SA[7.0, -2.0]  # y = 7 - 2x
+
+        for i in 1:3
+            rᵢ, ∂θgᵢ_w, ℓᵢ = residual_jacobian(prob, model, i)
+
+            # rᵢ should be the scalar residual yᵢ - a - b·xᵢ
+            expected_r = pts[i][2] - model[1] - model[2] * pts[i][1]
+            @test rᵢ ≈ expected_r atol=1e-14
+
+            # ∂θgᵢ_w should be [-1, -xᵢ]
+            @test ∂θgᵢ_w ≈ SA[-1.0, -pts[i][1]] atol=1e-14
+
+            # ℓᵢ should be 0 (homoscedastic)
+            @test ℓᵢ == 0.0
+
+            # qᵢ = rᵢ² (scalar case)
+            @test _sq_norm(rᵢ) ≈ rᵢ^2 atol=1e-14
+        end
     end
 
 end

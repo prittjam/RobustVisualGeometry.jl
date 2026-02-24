@@ -211,17 +211,17 @@ function solver_jacobian(p::InhomLineFittingProblem{T}, idx::Vector{Int},
     return (J=J, model=model)
 end
 
-# --- residual_jacobian: scalar residual r_i = y_i - a - b·x_i, G = [-1, -x_i] ---
+# --- residual_jacobian: rᵢ = yᵢ - a - bxᵢ, Gᵢ = [-1, -xᵢ], ℓᵢ = 0 (homoscedastic) ---
 
 function residual_jacobian(p::InhomLineFittingProblem{T},
                                        model::SVector{2,T}, i::Int) where T
     @inbounds begin
         pt = p.points[i]
         a, b = model
-        r = pt[2] - a - b * pt[1]
-        G = SA[-one(T), -pt[1]]
+        rᵢ = pt[2] - a - b * pt[1]
+        Gᵢ = SA[-one(T), -pt[1]]
     end
-    return (r, G)
+    return (rᵢ, Gᵢ, zero(T))
 end
 
 constraint_type(::InhomLineFittingProblem) = Unconstrained()
@@ -339,19 +339,19 @@ function solver_jacobian(p::EivLineFittingProblem{T}, idx::Vector{Int},
     return (J=J, model=model)
 end
 
-# --- residual_jacobian: r_i = n·p_i + d, G = [t·p_i, 1] ---
+# --- residual_jacobian: rᵢ = n·pᵢ + d, Gᵢ = [t·pᵢ, 1], ℓᵢ = 0 (homoscedastic) ---
 
 function residual_jacobian(p::EivLineFittingProblem{T},
                                        model::SVector{2,T}, i::Int) where T
     @inbounds begin
         pt = p.points[i]
         φ, d = model
-        n1, n2 = cos(φ), sin(φ)
-        t1, t2 = -n2, n1
-        r = n1 * pt[1] + n2 * pt[2] + d
-        G = SA[t1 * pt[1] + t2 * pt[2], one(T)]
+        n₁, n₂ = cos(φ), sin(φ)
+        t₁, t₂ = -n₂, n₁
+        rᵢ = n₁ * pt[1] + n₂ * pt[2] + d
+        Gᵢ = SA[t₁ * pt[1] + t₂ * pt[2], one(T)]
     end
-    return (r, G)
+    return (rᵢ, Gᵢ, zero(T))
 end
 
 constraint_type(::EivLineFittingProblem) = Unconstrained()
@@ -414,9 +414,9 @@ test_type(::LoLineFittingProblem) = PredictiveFTest()
 
 # --- residual_jacobian for LoLineFittingProblem ---
 #
-# Returns standardized residual and Jacobian:
-#   r_std = r_raw / σ_i, G_std = [t⊤p/σ_i, 1/σ_i]
-# where σ_i = √(n⊤Σᵢn) is the projected per-point noise.
+# Returns whitened residual, Jacobian, and log-determinant (Section 3, Eq. 5-7):
+#   rᵢ = r_raw / σᵢ, Gᵢ = [t⊤pᵢ/σᵢ, 1/σᵢ], ℓᵢ = log(σ²ᵢ) = log(n⊤Σᵢn)
+# where σᵢ = √(n⊤Σᵢn) is the projected per-point noise and Cᵢ = σ²ᵢ (scalar, dg=1).
 
 function residual_jacobian(p::LoLineFittingProblem{T},
                                        model::Line2D{T}, i::Int) where T
@@ -430,14 +430,17 @@ function residual_jacobian(p::LoLineFittingProblem{T},
         Σ = inner.cov_shapes[i]
 
         r_raw = nv[1] * T(pt[1]) + nv[2] * T(pt[2]) + d_val
-        σ2_i = nv[1]^2 * Σ[1,1] + 2*nv[1]*nv[2]*Σ[1,2] + nv[2]^2 * Σ[2,2]
-        σ_i = sqrt(max(σ2_i, eps(T)))
-        r_std = r_raw / σ_i
+        σ²ᵢ = nv[1]^2 * Σ[1,1] + 2*nv[1]*nv[2]*Σ[1,2] + nv[2]^2 * Σ[2,2]
+        σᵢ = sqrt(max(σ²ᵢ, eps(T)))
+        rᵢ = r_raw / σᵢ
 
-        ti = tv[1] * T(pt[1]) + tv[2] * T(pt[2])
-        G_std = SVector{2,T}(ti / σ_i, one(T) / σ_i)
+        tᵢ = tv[1] * T(pt[1]) + tv[2] * T(pt[2])
+        Gᵢ = SVector{2,T}(tᵢ / σᵢ, one(T) / σᵢ)
+
+        # ℓᵢ = log|Cᵢ| = log(σ²ᵢ) since dg=1 and Cᵢ = n⊤Σᵢn (scalar)
+        ℓᵢ = σ²ᵢ > eps(T) ? log(σ²ᵢ) : zero(T)
     end
-    return (r_std, G_std)
+    return (rᵢ, Gᵢ, ℓᵢ)
 end
 
 constraint_type(::LoLineFittingProblem) = Unconstrained()
