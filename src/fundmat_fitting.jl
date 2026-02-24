@@ -455,76 +455,44 @@ function fit_fundmat_robust_taubin_fns(correspondences;
     _finalize_fmat_result(result, T1, T2, u1, u2, Float64(sigma))
 end
 
-# =============================================================================
-# RANSAC-Seeded Robust Taubin→FNS / FNS
-# =============================================================================
-
 """
-    _fmat_normalize_seed(F_pixel, T1, T2) -> SVector{9}
+    fit_fundmat(correspondences; quality=nothing,
+        config=RansacConfig(), outlier_halfwidth=50.0)
 
-Convert a pixel-space fundamental matrix to a normalized 9-vec (row-major)
-in Hartley-normalized coordinates: F_norm = inv(T₂)ᵀ F T₁⁻¹, then flatten.
-"""
-function _fmat_normalize_seed(F_pixel::AbstractMatrix,
-                               T1::SMatrix{3,3,Float64,9},
-                               T2::SMatrix{3,3,Float64,9})
-    F_norm = inv(T2)' * F_pixel * inv(T1)
-    f = SVector{9,Float64}(
-        F_norm[1,1], F_norm[1,2], F_norm[1,3],
-        F_norm[2,1], F_norm[2,2], F_norm[2,3],
-        F_norm[3,1], F_norm[3,2], F_norm[3,3]
-    )
-    _fmat_project_rank2(f / norm(f))
-end
+Robust fundamental matrix estimation via 7-point RANSAC with scale-free
+marginal scoring.
 
-"""
-    fit_fundmat(correspondences; quality=nothing, local_optimization=NoLocalOptimization(),
-        config=RansacConfig(), sigma=1.0, confidence=0.99)
-
-Robust fundamental matrix estimation via 7-point RANSAC.
-
-Returns a `RansacEstimate` (or `UncertainRansacEstimate` when using
-`FTestLocalOptimization` with `PredictiveFTest`).
+Returns a `RansacEstimate`.
 
 For post-RANSAC polishing, use the standalone functions:
 - `fit_fundmat_robust_fns` — FNS with bias correction
 - `fit_fundmat_robust_taubin` — Taubin with gradient-weighted GEP
 - `fit_fundmat_robust_taubin_fns` — Two-phase Taubin → FNS
 
-# Arguments — RANSAC
+# Arguments
 - `quality`: Quality function for model selection.
-  Default: `ChiSquareQuality(FixedScale(σ=sigma), 1-confidence)`.
-- `local_optimization`: LO-RANSAC strategy. Default: `NoLocalOptimization()`.
+  Default: `MarginalQuality(problem, outlier_halfwidth)`.
 - `config`: RANSAC loop configuration.
-
-# Arguments — default quality construction
-- `sigma`: Noise σ (pixels). Used to build the default `quality`.
-  Ignored when `quality` is provided explicitly.
-- `confidence`: Chi-square confidence. Used to build the default `quality`.
-  Ignored when `quality` is provided explicitly.
+- `outlier_halfwidth`: Half-width of the outlier domain (parameter `a` in Eq. 12).
+  Only used when `quality` is not provided.
 
 # Examples
 ```julia
-# Simple (default ChiSquareQuality)
-result = fit_fundmat(csponds(src, dst))
+result = fit_fundmat(correspondences)
 
-# Custom quality + LO-RANSAC
-quality = MarginalQuality(length(correspondences), 7, 50.0)
-lo = FTestLocalOptimization(test=PredictiveFTest(), alpha=0.01)
-result = fit_fundmat(correspondences; quality, local_optimization=lo)
+# Custom quality
+quality = PredictiveMarginalQuality(length(correspondences), 7, 30.0; codimension=2)
+result = fit_fundmat(correspondences; quality)
 ```
 """
 function fit_fundmat(correspondences;
     quality::Union{AbstractQualityFunction, Nothing} = nothing,
-    local_optimization::AbstractLocalOptimization = NoLocalOptimization(),
     config::RansacConfig = RansacConfig(),
-    sigma::Real = 1.0,
-    confidence::Real = 0.99)
+    outlier_halfwidth::Real = 50.0)
 
     prob = FundamentalMatrixProblem(correspondences)
-    scoring = something(quality,
-        ChiSquareQuality(FixedScale(σ=Float64(sigma)), 1.0 - Float64(confidence)))
-    ransac(prob, scoring; local_optimization, config)
+    scoring = something(quality, MarginalQuality(prob, Float64(outlier_halfwidth)))
+    ransac(prob, scoring; config)
 end
 
 # =============================================================================

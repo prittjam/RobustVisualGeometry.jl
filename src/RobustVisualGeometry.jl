@@ -47,7 +47,6 @@ import VisualGeometryCore: RotMatrix,
                            _fill_fundamental_dlt!,
                            _vec9_to_mat33,
                            _oriented_epipolar_check,
-                           _transfer_error_jacobian_wrt_h,
                            projection_transform
 
 # =============================================================================
@@ -106,7 +105,6 @@ export AbstractQualityFunction
 export AbstractMarginalQuality, MarginalQuality, PredictiveMarginalQuality
 export AbstractLocalOptimization, NoLocalOptimization
 export default_local_optimization
-export AbstractStoppingStrategy, HypergeometricStopping, ScoreGapStopping, stopping_strategy
 export AbstractSampler, UniformSampler, ProsacSampler, sampler
 export RansacConfig, RansacEstimate, RansacAttributes
 export residual_jacobian, solver_jacobian, measurement_logdets!, model_covariance

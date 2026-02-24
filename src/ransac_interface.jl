@@ -373,16 +373,6 @@ The `mask` is a BitVector where `true` indicates an inlier.
 refine(::AbstractRansacProblem, _model, ::BitVector) = nothing
 
 """
-    refine(problem, model, mask, loss, σ)
-
-5-argument refine called from RANSAC inner loop with loss function and scale.
-Default: delegates to 3-argument `refine(problem, model, mask)`.
-Override for IRLS refinement (see `irls_refine`).
-"""
-refine(p::AbstractRansacProblem, model, mask::BitVector,
-       ::AbstractLoss, ::Real) = refine(p, model, mask)
-
-"""
     solver_jacobian(problem, sample_indices, model) -> NamedTuple or nothing
 
 Compute the Jacobian of the minimal solver evaluated at the given sample.

@@ -10,18 +10,7 @@
 # - LineFittingProblem: Plain RANSAC (no local optimization)
 # - LoLineFittingProblem: LO-RANSAC with weighted fit_line refinement on inliers
 #
-# Post-RANSAC F-test iteration refines the inlier set using the prediction-
-# corrected F(1,ν) test from the Student's t / unknown-scale framework.
-#
-# PLACEMENT: Included from main VisualGeometryCore.jl (NOT from Estimators
-# submodule) because it depends on Line2D, Point2 (Primitives), Uncertain
-# (base/types.jl), fit_line (line_fitting.jl), and Estimators internals.
-#
 # =============================================================================
-
-# Dependencies: Distributions (FDist, quantile)
-#               VGC: Line2D, Point2, Uncertain, fit_line
-#               All estimation types available from parent module
 
 # =============================================================================
 # LineFittingProblem — Plain RANSAC (no local optimization)
@@ -409,9 +398,6 @@ function refine(p::LoLineFittingProblem{T}, _line::Line2D{T}, mask::BitVector) w
     return (result.line.value, sqrt(result.s²))
 end
 
-# Override test_type for predictive F-test support
-test_type(::LoLineFittingProblem) = PredictiveFTest()
-
 # --- residual_jacobian for LoLineFittingProblem ---
 #
 # Returns whitened residual, Jacobian, and log-determinant (Section 3, Eq. 5-7):
@@ -451,47 +437,37 @@ constraint_type(::LoLineFittingProblem) = Unconstrained()
 
 """
     fit_line_ransac(points::AbstractVector{<:Uncertain{<:Point2}};
-        quality=nothing, local_optimization=nothing,
-        alpha=0.01, config=RansacConfig())
+        quality=nothing, config=RansacConfig(), outlier_halfwidth=50.0)
 
-Robust line fitting via RANSAC.
+Robust line fitting via RANSAC with scale-free marginal scoring.
 
-Returns a `RansacEstimate` (or `UncertainRansacEstimate` when using
-`FTestLocalOptimization` with `PredictiveFTest`).
+Returns a `RansacEstimate`.
 
-# Arguments — RANSAC
+# Arguments
 - `quality`: Quality function for model selection.
-  Default: `ChiSquareQuality(FixedScale(), alpha)`.
-- `local_optimization`: LO-RANSAC strategy.
-  Default: `FTestLocalOptimization(test=PredictiveFTest(), alpha=alpha)`.
+  Default: `MarginalQuality(problem, outlier_halfwidth)`.
 - `config`: RANSAC loop configuration.
-
-# Arguments — default construction
-- `alpha`: Significance level. Used to build the default `quality` and
-  `local_optimization`. Ignored when both are provided explicitly.
+- `outlier_halfwidth`: Half-width of the outlier domain (parameter `a` in Eq. 12).
+  Only used when `quality` is not provided.
 
 # Examples
 ```julia
 result = fit_line_ransac(points)
-result = fit_line_ransac(points; alpha=0.001)
 
 # Custom quality
-quality = MarginalQuality(length(points), 2, 50.0)
+quality = PredictiveMarginalQuality(length(points), 2, 30.0; codimension=1)
 result = fit_line_ransac(points; quality)
 ```
 """
 function fit_line_ransac(
     points::AbstractVector{<:Uncertain{<:Point2}};
     quality::Union{AbstractQualityFunction, Nothing} = nothing,
-    local_optimization::Union{AbstractLocalOptimization, Nothing} = nothing,
-    alpha::Real = 0.01,
     config::RansacConfig = RansacConfig(),
+    outlier_halfwidth::Real = 50.0,
 )
     problem = LoLineFittingProblem(points)
-    scoring = something(quality, ChiSquareQuality(FixedScale(), Float64(alpha)))
-    lo = something(local_optimization,
-        FTestLocalOptimization(; test=PredictiveFTest(), alpha=Float64(alpha)))
-    ransac(problem, scoring; local_optimization=lo, config)
+    scoring = something(quality, MarginalQuality(problem, Float64(outlier_halfwidth)))
+    ransac(problem, scoring; config)
 end
 
 """

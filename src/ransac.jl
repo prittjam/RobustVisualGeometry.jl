@@ -397,12 +397,6 @@ function _fill_scores!(ws::RansacWorkspace{M,T}, problem,
 end
 
 # =============================================================================
-# _lo_quality — No-ops for non-iterative local optimization
-# =============================================================================
-
-_lo_quality(scoring, ws, problem, model, ::NoLocalOptimization) = Inf
-
-# =============================================================================
 # _lo_refine! — Local Refinement Dispatch (refine only, no scoring)
 # =============================================================================
 

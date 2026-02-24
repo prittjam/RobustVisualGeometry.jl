@@ -1,15 +1,15 @@
 # =============================================================================
-# Scoring — Quality functions and stopping strategies
+# Scoring — Quality functions for scale-free marginal RANSAC
 # =============================================================================
 #
-# Defines how RANSAC candidate models are evaluated and when the loop stops.
+# Defines how RANSAC candidate models are evaluated.
 #
 # Contents:
 #   1. AbstractQualityFunction
-#   2. Local optimization strategies (NoLocalOptimization)
-#   3. Concrete quality types (MarginalQuality, PredictiveMarginalQuality)
-#   4. init_quality, default_local_optimization, _quality_improved
-#   5. Stopping strategies (HypergeometricStopping, ScoreGapStopping)
+#   2. CovarianceStructure trait (Homoscedastic, Heteroscedastic, Predictive)
+#   3. Local optimization strategies (NoLocalOptimization)
+#   4. Concrete quality types (MarginalQuality, PredictiveMarginalQuality)
+#   5. init_quality, default_local_optimization, _quality_improved
 #
 # DEPENDENCY: Requires AbstractRansacProblem from ransac_interface.jl
 #
@@ -313,60 +313,3 @@ All strategies use higher = better convention.
 """
 _quality_improved(::AbstractMarginalQuality, new, old) = new[2] > old[2]
 
-# -----------------------------------------------------------------------------
-# Stopping Strategies
-# -----------------------------------------------------------------------------
-
-"""
-    AbstractStoppingStrategy
-
-Abstract type for RANSAC early stopping strategies.
-
-Stopping strategies are queried each iteration via `_check_early_stop` to
-determine whether to terminate the main loop early. The default
-`HypergeometricStopping` never stops early (adaptive trial count suffices).
-
-See also: [`stopping_strategy`](@ref), [`_check_early_stop`](@ref)
-"""
-abstract type AbstractStoppingStrategy end
-
-"""
-    HypergeometricStopping <: AbstractStoppingStrategy
-
-Default stopping strategy: rely on the hypergeometric adaptive trial count.
-`_check_early_stop` always returns `false`.
-"""
-struct HypergeometricStopping <: AbstractStoppingStrategy end
-
-"""
-    ScoreGapStopping <: AbstractStoppingStrategy
-
-Score-gap early stopping for marginal scoring strategies.
-
-Terminates when `T_rem / (gap + 2) < eps`, where `T_rem` is the remaining
-trial budget and `gap` is the number of trials since the last score improvement.
-"""
-struct ScoreGapStopping <: AbstractStoppingStrategy
-    eps::Float64
-end
-
-"""
-    stopping_strategy(scoring::AbstractQualityFunction) -> AbstractStoppingStrategy
-
-Return the stopping strategy for the given quality function.
-
-Default: `HypergeometricStopping()` for all strategies.
-"""
-stopping_strategy(::AbstractQualityFunction) = HypergeometricStopping()
-
-"""
-    _check_early_stop(strategy, trial, needed, best, old_best, gap) -> Bool
-
-Check whether the main loop should terminate early.
-"""
-_check_early_stop(::HypergeometricStopping, trial, needed, best, old_best, gap) = false
-
-function _check_early_stop(s::ScoreGapStopping, trial, needed, best, old_best, gap)
-    T_rem = needed - trial
-    T_rem > 0 && gap > 0 && Float64(T_rem) / Float64(gap + 2) < s.eps
-end
