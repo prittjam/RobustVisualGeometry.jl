@@ -87,13 +87,27 @@ function ransac(problem::AbstractRansacProblem,
 end
 
 # =============================================================================
-# Trait-dispatched Quality — MarginalQuality (tuple best: (best_g, best_l))
+# Solve dispatch: wrap SingleSolution output in FixedModels{1,M} so the
+# scoring loop always iterates over a FixedModels container.
+# =============================================================================
+
+_solve_models(problem, idx, ::MultipleSolutions) = solve(problem, idx)
+
+function _solve_models(problem, idx, ::SingleSolution)
+    model = solve(problem, idx)
+    isnothing(model) && return nothing
+    M = typeof(model)
+    FixedModels{1, M}(1, (model,))
+end
+
+# =============================================================================
+# _score_candidates! — single method for all solver cardinalities
 # =============================================================================
 
 function _score_candidates!(ws, problem, scoring::AbstractMarginalQuality,
                             local_optimization, best::Tuple{T,T},
-                            ::MultipleSolutions) where T
-    solutions = solve(problem, ws.sample_indices)
+                            cardinality::SolverCardinality) where T
+    solutions = _solve_models(problem, ws.sample_indices, cardinality)
     isnothing(solutions) && return best
     best_g, best_l = best
     for model in solutions
@@ -101,17 +115,6 @@ function _score_candidates!(ws, problem, scoring::AbstractMarginalQuality,
         best_g, best_l = _try_model!(ws, problem, scoring, local_optimization,
                                       model, best_g, best_l)
     end
-    return (best_g, best_l)
-end
-
-function _score_candidates!(ws, problem, scoring::AbstractMarginalQuality,
-                            local_optimization, best::Tuple{T,T},
-                            ::SingleSolution) where T
-    model = solve(problem, ws.sample_indices)
-    isnothing(model) && return best
-    test_model(problem, model) || return best
-    best_g, best_l = _try_model!(ws, problem, scoring, local_optimization,
-                                  model, best[1], best[2])
     return (best_g, best_l)
 end
 
