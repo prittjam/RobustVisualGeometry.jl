@@ -27,9 +27,36 @@ using Random: Random
 # Imports from VisualGeometryCore
 # =============================================================================
 
-using VisualGeometryCore
+# Types
+using VisualGeometryCore: Point2, Line2D, Ellipse, Uncertain,
+                          Attributed, AbstractAttributes,
+                          HomEllipseMat, CameraModel,
+                          EuclideanMap, ScoredCspond
 
-# Explicit imports of internal (non-exported) VGC symbols
+# Scoring trait
+using VisualGeometryCore: ScoringTrait, HasScore, NoScore, scoring
+
+# Loss functions (re-exported by RVG)
+using VisualGeometryCore: AbstractLoss, GNCLoss,
+                          L2Loss, HuberLoss, CauchyLoss, TukeyLoss,
+                          GemanMcClureLoss, WelschLoss, FairLoss
+
+# Scale estimators (re-exported by RVG)
+using VisualGeometryCore: AbstractScaleEstimator,
+                          MADScale, WeightedScale, FixedScale, SpatialMADScale,
+                          estimate_scale, chi2_threshold
+
+# Geometry operations
+using VisualGeometryCore: normal, param_cov, sign_normalize,
+                          enforce_rank_two, hartley_normalization,
+                          backproject
+
+# Solvers
+using VisualGeometryCore: homography_4pt, homography_4pt_with_jacobian,
+                          homography_dlt!,
+                          fundamental_matrix_7pt, fundamental_matrix_dlt!,
+                          p3p
+
 # Import VGC functions we need to extend with new methods in RVG.
 # Without `import`, `function foo(...)` creates a NEW function in RVG scope,
 # shadowing VGC's version and breaking dispatch for VGC's method signatures.
