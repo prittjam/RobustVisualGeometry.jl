@@ -69,32 +69,12 @@ function solve(p::FundamentalMatrixProblem{T}, idx::Vector{Int}) where T
         u₂[idx[5]], u₂[idx[6]], u₂[idx[7]], T)
     isnothing(result) && return nothing
 
-    # Oriented epipolar check on SAMPLE points only (not all data).
-    # Stack-allocated sample SVectors avoid Vector allocation from u₁[idx].
-    @inbounds u₁s = SVector(u₁[idx[1]], u₁[idx[2]], u₁[idx[3]], u₁[idx[4]],
-                             u₁[idx[5]], u₁[idx[6]], u₁[idx[7]])
-    @inbounds u₂s = SVector(u₂[idx[1]], u₂[idx[2]], u₂[idx[3]], u₂[idx[4]],
-                             u₂[idx[5]], u₂[idx[6]], u₂[idx[7]])
-
     # Union-split: 1 solution (FundamentalMat) or 3 solutions (SVector{3})
     if result isa FundamentalMat{T}
-        _oriented_epipolar_check(u₁s, u₂s, result) || return nothing
         return FixedModels{1, FundamentalMat{T}}(1, (result,))
     else
-        # SVector{3, FundamentalMat{T}} — filter with oriented epipolar check
-        n_out = 0
-        G₁ = G₂ = G₃ = FundamentalMat{T}(Tuple(zero(SMatrix{3,3,T,9})))
-        for i in 1:3
-            F = result[i]
-            _oriented_epipolar_check(u₁s, u₂s, F) || continue
-            n_out += 1
-            if n_out == 1; G₁ = F
-            elseif n_out == 2; G₂ = F
-            else; G₃ = F
-            end
-        end
-        n_out == 0 && return nothing
-        return FixedModels{3, FundamentalMat{T}}(n_out, (G₁, G₂, G₃))
+        F₁, F₂, F₃ = result[1], result[2], result[3]
+        return FixedModels{3, FundamentalMat{T}}(3, (F₁, F₂, F₃))
     end
 end
 
@@ -106,10 +86,18 @@ residuals!(r::Vector, p::FundamentalMatrixProblem{T}, F::FundamentalMat{T}) wher
 # reject ~75% of valid all-inlier samples (matching SuperANSAC's approach).
 test_sample(::FundamentalMatrixProblem, ::Vector{Int}) = true
 
-# NOTE: test_consensus defaults to `true`. The oriented epipolar check cannot
-# be used on the consensus set because inliers spread across the image may
-# lie on opposite sides of the epipole (valid geometry, not degenerate).
-# The check is applied in solve() on the 7 sample points only.
+# Oriented epipolar constraint on sample points: all sample correspondences
+# must have consistent sign of det([e₂]_× F u₁_hom), verifying that the
+# epipolar geometry is physically realizable (cheirality on the sample).
+function test_model(p::FundamentalMatrixProblem{T}, F::FundamentalMat{T},
+                    idx::Vector{Int}) where T
+    u₁ = p.cs.first; u₂ = p.cs.second
+    @inbounds u₁s = SVector(u₁[idx[1]], u₁[idx[2]], u₁[idx[3]], u₁[idx[4]],
+                             u₁[idx[5]], u₁[idx[6]], u₁[idx[7]])
+    @inbounds u₂s = SVector(u₂[idx[1]], u₂[idx[2]], u₂[idx[3]], u₂[idx[4]],
+                             u₂[idx[5]], u₂[idx[6]], u₂[idx[7]])
+    return _oriented_epipolar_check(u₁s, u₂s, F)
+end
 
 # =============================================================================
 # fit — Weighted DLT for LO-RANSAC
