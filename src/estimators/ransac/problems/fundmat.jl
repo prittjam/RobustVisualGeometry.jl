@@ -60,18 +60,8 @@ codimension(::FundMatProblem) = 1  # d_g = 1: one scalar epipolar constraint
 model_type(::FundMatProblem{T}) where T = FundMat{T}
 solver_cardinality(::FundMatProblem) = MultipleSolutions()
 
-function solve(p::FundMatProblem{T}, idx::AbstractVector{Int}) where T
-    result = fundmat_7pt(p.cs, idx, T)
-    isnothing(result) && return nothing
-
-    # Union-split: 1 solution (FundMat) or 3 solutions (SVector{3})
-    if result isa FundMat{T}
-        return FixedModels{1, FundMat{T}}(1, (result,))
-    else
-        F₁, F₂, F₃ = result[1], result[2], result[3]
-        return FixedModels{3, FundMat{T}}(3, (F₁, F₂, F₃))
-    end
-end
+solve(p::FundMatProblem{T}, idx::AbstractVector{Int}) where T =
+    fundmat_7pt(p.cs, idx, T)
 
 residuals!(r::Vector, p::FundMatProblem{T}, F::FundMat{T}) where T =
     sampson_distances!(r, F, p.cs)

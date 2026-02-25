@@ -1,33 +1,6 @@
 # =============================================================================
-# RANSAC Types — Configuration, workspace, result types, FixedModels
+# RANSAC Types — Configuration, workspace, result types
 # =============================================================================
-
-# -----------------------------------------------------------------------------
-# FixedModels: Zero-allocation iterable for multiple solver solutions
-# -----------------------------------------------------------------------------
-
-"""
-    FixedModels{N, M}
-
-Stack-allocated container for up to `N` candidate models of type `M`.
-
-Supports `for model in solutions` iteration and `length(solutions)`.
-Used by `MultipleSolutions` solvers to avoid heap-allocating a `Vector`
-in the RANSAC hot loop.
-
-`isbitstype(FixedModels{N,M}) == true` when `isbitstype(M) == true`.
-"""
-struct FixedModels{N, M}
-    count::Int
-    data::NTuple{N, M}
-end
-
-@inline function Base.iterate(fm::FixedModels, i::Int=1)
-    i > fm.count && return nothing
-    return (@inbounds fm.data[i], i + 1)
-end
-Base.length(fm::FixedModels) = fm.count
-Base.eltype(::Type{FixedModels{N,M}}) where {N,M} = M
 
 # -----------------------------------------------------------------------------
 # Configuration

@@ -20,28 +20,6 @@
 #               All estimation types available from parent module
 
 # =============================================================================
-# Pose3 Type Alias
-# =============================================================================
-
-"""
-    Pose3
-
-Type alias for `EuclideanMap{3,Float64,RotMatrix{3,Float64,9},SVector{3,Float64}}`.
-
-Represents a rigid 3D pose (rotation + translation). Used as the model type
-for P3P RANSAC estimation.
-
-`isbitstype(Pose3) == true` — stored inline in `RansacWorkspace`, zero heap
-allocation on update.
-"""
-const Pose3 = EuclideanMap{3,Float64,RotMatrix{3,Float64,9},SVector{3,Float64}}
-
-function Base.zero(::Type{Pose3})
-    EuclideanMap(RotMatrix{3,Float64}(one(SMatrix{3,3,Float64,9})),
-                 zero(SVector{3,Float64}))
-end
-
-# =============================================================================
 # P3PProblem Type
 # =============================================================================
 
@@ -126,24 +104,11 @@ function solve(p::P3PProblem, idx::AbstractVector{Int})
     @inbounds rays_sample = SVector(p.rays[idx[1]], p.rays[idx[2]], p.rays[idx[3]])
     X = p.cs.first
     @inbounds X_sample = SVector(X[idx[1]], X[idx[2]], X[idx[3]])
-
-    # P3P solver can throw on degenerate configurations (e.g., collinear points)
-    local Rs, ts
     try
-        Rs, ts = p3p(rays_sample, X_sample)
+        return p3p(rays_sample, X_sample)
     catch
         return nothing
     end
-    n = length(Rs)
-    n == 0 && return nothing
-
-    # Stack-allocated container: zero heap allocation
-    z = zero(Pose3)
-    @inbounds p1 = n >= 1 ? EuclideanMap(RotMatrix{3,Float64}(Rs[1]), SVector{3,Float64}(ts[1])) : z
-    @inbounds p2 = n >= 2 ? EuclideanMap(RotMatrix{3,Float64}(Rs[2]), SVector{3,Float64}(ts[2])) : z
-    @inbounds p3 = n >= 3 ? EuclideanMap(RotMatrix{3,Float64}(Rs[3]), SVector{3,Float64}(ts[3])) : z
-    @inbounds p4 = n >= 4 ? EuclideanMap(RotMatrix{3,Float64}(Rs[4]), SVector{3,Float64}(ts[4])) : z
-    return FixedModels{4, Pose3}(n, (p1, p2, p3, p4))
 end
 
 function residuals!(r::Vector, p::P3PProblem, pose::Pose3)

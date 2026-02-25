@@ -30,8 +30,9 @@ using Random: Random
 using VisualGeometryCore: Point2, Line2D, Ellipse, Uncertain,
                           Attributed, AbstractAttributes,
                           HomEllipseMat, CameraModel,
-                          EuclideanMap,
-                          HomographyMat, FundMat
+                          EuclideanMap, Pose3,
+                          HomographyMat, FundMat,
+                          FixedModels
 
 # Scoring trait
 using VisualGeometryCore: HasScore, scoring

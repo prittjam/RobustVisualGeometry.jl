@@ -85,7 +85,7 @@ Fit model(s) from a minimal sample specified by `indices`.
 
 Return type depends on `solver_cardinality(problem)`:
 - `SingleSolution`: return `M` or `nothing`
-- `MultipleSolutions`: return an iterable of `M` (e.g., `FixedModels{N,M}`) or `nothing`
+- `MultipleSolutions`: return `FixedModels{N,M}` or `nothing`
 
 Returns `nothing` if the solve fails (e.g., degenerate configuration).
 """
