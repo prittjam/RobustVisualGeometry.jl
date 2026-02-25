@@ -303,7 +303,7 @@ end
 
 Return the measurement covariance structure trait for Σ̃_{xᵢ} (Section 3.3).
 
-This trait determines which `_fill_scores!` method is dispatched for
+This trait determines which `score!` method is dispatched for
 model-certain scoring (`MarginalQuality`):
 
 - `Homoscedastic()`:   Σ̃_{xᵢ} = I for all i (isotropic, dg=1). ℓᵢ = 0.

@@ -50,14 +50,6 @@ sampler
 RansacConfig
 RansacEstimate
 RansacAttributes
-UncertainRansacEstimate
-UncertainRansacAttributes
-```
-
-## Prediction
-
-```@docs
-prediction_variances!
 ```
 
 ## Solver Traits

@@ -1,7 +1,7 @@
 # RANSAC
 
 The RANSAC implementation is fully modular: quality functions, local optimization strategies,
-stopping criteria, and samplers can all be swapped independently.
+and samplers can all be swapped independently.
 
 ## Basic Usage
 
@@ -13,32 +13,27 @@ src = [SA[100.0, 200.0], SA[300.0, 150.0], ...]
 dst = [SA[112.0, 195.0], SA[310.0, 148.0], ...]
 
 problem = HomographyProblem(csponds(src, dst))
-quality = ThresholdQuality(CauchyLoss(), 3.0, FixedScale())
+quality = MarginalQuality(problem, 50.0)  # a = outlier half-width
 result = ransac(problem, quality)
 ```
 
 ## Quality Functions
 
 Quality functions score how well a model hypothesis fits the data.
-RobustVisualGeometry provides four quality functions: `ThresholdQuality`
-(MSAC), `ChiSquareQuality`, `MarginalQuality`, and `PredictiveMarginalQuality`.
+RobustVisualGeometry provides two quality functions based on Bayesian marginal
+likelihoods: `MarginalQuality` and `PredictiveMarginalQuality`. Both are
+threshold-free and scale-free.
 
-For detailed descriptions, mathematical formulas, a comparison table, and
-the statistical framework for post-selection inference, see the
+For detailed descriptions and mathematical formulas, see the
 [Scoring Functions guide](scoring.md).
 
 ```julia
-# MSAC with fixed threshold
-scoring = ThresholdQuality(L2Loss(), 3.0, FixedScale(σ=1.0))
-
-# Chi-square with significance level
-scoring = ChiSquareQuality(FixedScale(σ=2.0), 0.01)
-
 # Marginal likelihood (threshold-free, scale-free)
-scoring = MarginalQuality(n, p, 50.0)
+# Problem-aware constructor derives n, p, codimension automatically
+scoring = MarginalQuality(problem, 50.0)    # a = outlier half-width
 
-# Marginal + prediction correction
-scoring = PredictiveMarginalQuality(n, p, 50.0)
+# Marginal + prediction correction (accounts for minimal-sample uncertainty)
+scoring = PredictiveMarginalQuality(problem, 50.0)
 ```
 
 ## Refinement

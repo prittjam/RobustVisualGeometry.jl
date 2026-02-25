@@ -58,7 +58,7 @@ solver_cardinality(::MyProblem) = SingleSolution()
 
 ```julia
 problem = MyProblem(data)
-quality = ThresholdQuality(CauchyLoss(), 3.0, FixedScale())
+quality = MarginalQuality(problem, 50.0)
 result = ransac(problem, quality)
 ```
 

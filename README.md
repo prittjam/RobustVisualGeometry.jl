@@ -23,9 +23,9 @@ using VisualGeometryCore: csponds, SA
 src = [SA[100.0, 200.0], SA[300.0, 150.0], ...]
 dst = [SA[112.0, 195.0], SA[310.0, 148.0], ...]
 
-# RANSAC with Cauchy loss and fixed inlier threshold
+# RANSAC with marginal likelihood scoring (threshold-free, scale-free)
 problem = HomographyProblem(csponds(src, dst))
-scoring = ThresholdQuality(CauchyLoss(), 3.0, FixedScale())
+scoring = MarginalQuality(problem, 50.0)  # a = outlier half-width
 result = ransac(problem, scoring)
 
 H = result.value                          # 3×3 homography matrix
@@ -101,17 +101,15 @@ AbstractRansacProblem                        RANSAC problem interface
 └── P3PProblem
 
 AbstractQualityFunction                      RANSAC quality scoring
-├── ThresholdQuality (MSAC)
-├── ChiSquareQuality
-├── MarginalQuality
-└── PredictiveMarginalQuality
+├── MarginalQuality                          Threshold-free marginal likelihood
+└── PredictiveMarginalQuality                Prediction-corrected variant
 ```
 
 ### Key design decisions
 
 - **Pluggable quality functions**: RANSAC loop is quality-agnostic via trait dispatch
 - **Composable refinement**: NoRefinement / DltRefinement / IrlsRefinement
-- **Holy trait dispatch**: `SolverCardinality` (SingleSolution vs MultipleSolutions), `AbstractTestType` (BasicFTest vs PredictiveFTest)
+- **Holy trait dispatch**: `SolverCardinality` (SingleSolution vs MultipleSolutions), `CovarianceStructure` (Homoscedastic vs Heteroscedastic vs Predictive)
 - **Uncertainty quantification**: Full covariance propagation through Hartley normalization
 
 ## Documentation

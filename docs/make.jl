@@ -9,7 +9,7 @@ makedocs(;
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
         canonical="https://prittjam.github.io/RobustVisualGeometry.jl",
-        edit_link="main",
+        edit_link="master",
         assets=String[],
     ),
     warnonly=true,

@@ -6,7 +6,7 @@ using ForwardDiff
 using VisualGeometryCore
 using RobustVisualGeometry
 using RobustVisualGeometry: MarginalQuality, PredictiveMarginalQuality, RansacConfig, ransac,
-    Homoscedastic, Heteroscedastic, _fill_scores!, _sq_norm, RansacWorkspace,
+    Homoscedastic, Heteroscedastic, score!, _sq_norm, RansacWorkspace,
     data_size, sample_size, model_type, residual_jacobian
 
 # =============================================================================
@@ -210,11 +210,11 @@ end
 
         # --- Homoscedastic path ---
         ws_h = RansacWorkspace(n, sample_size(prob), model_type(prob))
-        _fill_scores!(ws_h, prob, scoring, model, Homoscedastic())
+        score!(ws_h, prob, scoring, model, Homoscedastic())
 
         # --- Heteroscedastic path ---
         ws_het = RansacWorkspace(n, sample_size(prob), model_type(prob))
-        _fill_scores!(ws_het, prob, scoring, model, Heteroscedastic())
+        score!(ws_het, prob, scoring, model, Heteroscedastic())
 
         # Scores qᵢ should be identical
         @test ws_h.scores ≈ ws_het.scores atol=1e-12

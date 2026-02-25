@@ -46,16 +46,12 @@ RANSAC problems implement: `sample_size`, `data_size`, `model_type`, `solve`,
 
 ```
 AbstractQualityFunction                      RANSAC quality scoring
-├── ThresholdQuality (MSAC)
-├── ChiSquareQuality
-├── TruncatedQuality
-├── MarginalQuality
-└── PredictiveMarginalQuality
+├── MarginalQuality                          Threshold-free marginal likelihood
+└── PredictiveMarginalQuality                Prediction-corrected variant
 ```
 
-Quality functions score model hypotheses. `ThresholdQuality` is the standard MSAC
-approach; `MarginalQuality` and `PredictiveMarginalQuality` use Bayesian marginal
-likelihoods for automatic threshold selection.
+Quality functions score model hypotheses. `MarginalQuality` and `PredictiveMarginalQuality`
+use Bayesian marginal likelihoods for automatic threshold and scale selection.
 
 ## Composable Refinement
 
