@@ -21,8 +21,12 @@ Iteratively Reweighted Least Squares. `GNCEstimator` wraps a GNC-compatible loss
 ```
 AbstractRobustProblem                        Generic robust optimization
 ├── LinearRobustProblem                      Ax ≈ b with outliers
-├── ConicTaubinProblem / ConicFNSProblem     Conic fitting
-└── FMatTaubinProblem / FMatFNSProblem       F-matrix fitting
+├── AbstractTaubinProblem                    Taubin GEP fitting
+│   ├── ConicTaubinProblem                   Conic fitting
+│   └── FMatTaubinProblem                    F-matrix fitting
+└── AbstractFNSProblem                       FNS iterative fitting
+    ├── ConicFNSProblem                      Conic fitting
+    └── FMatFNSProblem                       F-matrix fitting
 ```
 
 Each problem type implements a standard interface: `initial_solve`, `compute_residuals!`,
@@ -33,9 +37,12 @@ Each problem type implements a standard interface: `initial_solve`, `compute_res
 ```
 AbstractRansacProblem                        RANSAC problem interface
 ├── LineFittingProblem
-├── HomographyProblem
-├── FundMatProblem
-└── P3PProblem
+├── InhomLineFittingProblem
+├── EivLineFittingProblem
+├── AbstractCspondProblem{T}                 Correspondence-based problems
+│   ├── HomographyProblem{T,S}
+│   └── FundMatProblem{T,S}
+└── P3PProblem{S,F}
 ```
 
 RANSAC problems implement: `sample_size`, `data_size`, `model_type`, `codimension`,
@@ -45,8 +52,9 @@ RANSAC problems implement: `sample_size`, `data_size`, `model_type`, `codimensio
 
 ```
 AbstractQualityFunction                      RANSAC quality scoring
-├── MarginalQuality                          Threshold-free marginal likelihood
-└── PredictiveMarginalQuality                Prediction-corrected variant
+└── AbstractMarginalQuality                  Marginal likelihood family
+    ├── MarginalQuality                      Threshold-free marginal likelihood
+    └── PredictiveMarginalQuality            Prediction-corrected variant
 ```
 
 Quality functions score model hypotheses. `MarginalQuality` and `PredictiveMarginalQuality`

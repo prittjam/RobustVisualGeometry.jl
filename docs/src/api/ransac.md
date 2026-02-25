@@ -58,7 +58,6 @@ ConstraintType
 Constrained
 Unconstrained
 constraint_type
-codimension
 inlier_ratio
 ```
 
@@ -86,6 +85,9 @@ re-exported here for RANSAC solvers.
 
 ## Fixed Models
 
-```@docs
-FixedModels
-```
+**`FixedModels{N, M}`** — Stack-allocated container holding up to `N` candidate models of type `M`.
+Defined in VisualGeometryCore, re-exported here. Supports `iterate`, `length`, `eltype`, `collect`.
+
+Used as the return type of `MultipleSolutions` solvers:
+- `p3p` → `FixedModels{4, Pose3}`
+- `fundmat_7pt` → `FixedModels{3, FundMat{T}}`
