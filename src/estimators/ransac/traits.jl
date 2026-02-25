@@ -14,7 +14,7 @@ Holy Trait indicating whether a minimal solver returns one or multiple candidate
 Used for compile-time dispatch to eliminate iteration overhead for single-model solvers.
 
 - `SingleSolution()`: `solve` returns `M` or `nothing`
-- `MultipleSolutions()`: `solve` returns an iterable of `M` or `nothing`
+- `MultipleSolutions()`: `solve` returns `FixedModels{N,M}` or `nothing`
 """
 abstract type SolverCardinality end
 

@@ -19,7 +19,7 @@ Configuration parameters for the RANSAC algorithm.
 # Example
 ```julia
 config = RansacConfig(confidence=0.999, max_trials=50_000)
-result = ransac(problem, CauchyLoss(), 3.0; config)
+result = ransac(problem, scoring; config)
 ```
 """
 Base.@kwdef struct RansacConfig

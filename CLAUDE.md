@@ -37,7 +37,7 @@ src/
 │   ├── irls.jl                # M-estimation (IRLS)
 │   ├── gnc.jl                 # Graduated Non-Convexity
 │   └── ransac/
-│       ├── types.jl           # FixedModels, RansacConfig, RansacWorkspace
+│       ├── types.jl           # RansacConfig, RansacWorkspace
 │       ├── traits.jl          # Holy traits: SolverCardinality, ConstraintType
 │       ├── samplers.jl        # UniformSampler, ProsacSampler
 │       ├── interface.jl       # AbstractRansacProblem API

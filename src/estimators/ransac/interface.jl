@@ -25,8 +25,8 @@ and residual computation for a specific estimation task.
 - `solver_cardinality(p)` — `SingleSolution()` or `MultipleSolutions()` (default)
 - `draw_sample!(indices, p)` — custom sampling (default: uniform without replacement)
 - `test_sample(p, indices)` — degeneracy check (default: `true`)
-- `test_model(p, model)` — feasibility check (default: `true`)
-- `fit(p, mask, weights)` — weighted least-squares fit on inlier subset (default: `nothing`)
+- `test_model(p, model, indices)` — feasibility check at sample points (default: `true`)
+- `fit(p, mask, weights, strategy)` — weighted least-squares fit on inlier subset (default: `nothing`)
 
 # Example
 ```julia
