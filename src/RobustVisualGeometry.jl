@@ -205,14 +205,15 @@ include("estimators/ransac/loop.jl")
 include("conic_fitting.jl")
 include("fitting/line.jl")
 
-# RANSAC problem implementations (line split happens in Phase 4)
-include("ransac_line.jl")
+# RANSAC problem implementations
+include("estimators/ransac/problems/line.jl")
 include("estimators/ransac/problems/cspond.jl")
 include("estimators/ransac/problems/p3p.jl")
 include("estimators/ransac/problems/homography.jl")
 include("estimators/ransac/problems/fundmat.jl")
 
 # Fitting pipelines — depend on RANSAC problems
+include("fitting/line_ransac.jl")
 include("fitting/homography.jl")
 include("fitting/fundmat.jl")
 
