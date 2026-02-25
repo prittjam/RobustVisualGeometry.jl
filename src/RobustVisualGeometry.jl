@@ -193,8 +193,11 @@ include("gep.jl")
 include("estimators/irls.jl")
 include("estimators/gnc.jl")
 
-# Estimators — RANSAC framework (interface split happens in Phase 3)
-include("ransac_interface.jl")
+# Estimators — RANSAC framework
+include("estimators/ransac/types.jl")
+include("estimators/ransac/traits.jl")
+include("estimators/ransac/samplers.jl")
+include("estimators/ransac/interface.jl")
 include("estimators/ransac/scoring.jl")
 include("estimators/ransac/loop.jl")
 
