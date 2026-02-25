@@ -201,8 +201,17 @@ include("estimators/ransac/interface.jl")
 include("estimators/ransac/scoring.jl")
 include("estimators/ransac/loop.jl")
 
-# Fitting pipelines
-include("conic_fitting.jl")
+# Fitting pipelines — Conic
+include("fitting/conic/utils.jl")
+include("fitting/conic/carriers.jl")
+include("fitting/conic/types.jl")
+include("fitting/conic/algebraic.jl")
+include("fitting/conic/taubin.jl")
+include("fitting/conic/fns.jl")
+include("fitting/conic/gnc.jl")
+include("fitting/conic/geometric.jl")
+
+# Fitting pipelines — Line
 include("fitting/line.jl")
 
 # RANSAC problem implementations
