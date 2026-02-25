@@ -1,5 +1,5 @@
 # =============================================================================
-# RANSAC Interface — AbstractRansacProblem API, method stubs, RansacRefineProblem
+# RANSAC Interface — AbstractRansacProblem API and method stubs
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -26,7 +26,7 @@ and residual computation for a specific estimation task.
 - `draw_sample!(indices, p)` — custom sampling (default: uniform without replacement)
 - `test_sample(p, indices)` — degeneracy check (default: `true`)
 - `test_model(p, model)` — feasibility check (default: `true`)
-- `refine(p, model, mask)` — local optimization on inliers (default: `nothing`)
+- `fit(p, mask, weights)` — weighted least-squares fit on inlier subset (default: `nothing`)
 
 # Example
 ```julia
@@ -51,65 +51,6 @@ end
 ```
 """
 abstract type AbstractRansacProblem end
-
-# -----------------------------------------------------------------------------
-# Refinement Strategies (LO-RANSAC inner-loop refinement)
-# -----------------------------------------------------------------------------
-
-"""
-    AbstractRefinement
-
-Abstract type for RANSAC local optimization (LO-RANSAC) refinement strategies.
-
-Concrete subtypes control what happens after a candidate model is scored:
-- `NoRefinement()`: Plain RANSAC, no local optimization
-- `DltRefinement()`: Re-estimate on inliers via DLT (fast, single solve)
-- `IrlsRefinement(max_iter=5)`: IRLS with Sampson-corrected weights (slower, more accurate)
-
-The refinement strategy is a type parameter on the problem, enabling
-zero-cost compile-time dispatch.
-
-# Example
-```julia
-prob = HomographyProblem(cs; refinement=NoRefinement())        # plain RANSAC
-prob = HomographyProblem(cs; refinement=DltRefinement())       # DLT refit
-prob = HomographyProblem(cs; refinement=IrlsRefinement())      # LO-RANSAC (default)
-prob = HomographyProblem(cs; refinement=IrlsRefinement(max_iter=10))
-```
-"""
-abstract type AbstractRefinement end
-
-"""
-    NoRefinement <: AbstractRefinement
-
-No local optimization. The minimal solver output is scored directly.
-Fastest option; use when speed matters more than accuracy.
-"""
-struct NoRefinement <: AbstractRefinement end
-
-"""
-    DltRefinement <: AbstractRefinement
-
-Re-estimate the model on the inlier set using DLT (Direct Linear Transform).
-Single linear solve, no iteration. Good balance of speed and accuracy.
-"""
-struct DltRefinement <: AbstractRefinement end
-
-"""
-    IrlsRefinement <: AbstractRefinement
-
-Iteratively Reweighted Least Squares with Sampson-corrected weights.
-Most accurate inner-loop refinement; default for both homography and F-matrix.
-
-# Constructor
-```julia
-IrlsRefinement()             # 5 iterations (default)
-IrlsRefinement(max_iter=10)  # custom iteration count
-```
-"""
-Base.@kwdef struct IrlsRefinement <: AbstractRefinement
-    max_iter::Int = 5
-end
 
 # -----------------------------------------------------------------------------
 # Required Method Stubs
@@ -256,16 +197,20 @@ Default: `true` (no consensus check). Override for problem-specific checks.
 test_consensus(::AbstractRansacProblem, _model, _mask::BitVector) = true
 
 """
-    refine(problem::AbstractRansacProblem, model, mask::BitVector)
+    fit(problem::AbstractRansacProblem, mask::BitVector, weights::AbstractVector, strategy::FitStrategy) -> model or nothing
 
-Perform local optimization (e.g., IRLS) on inlier subset.
+Weighted least-squares fit on the subset defined by `mask` and `weights`,
+using the solver selected by `strategy`.
 
-Return `(refined_model, scale)` or `nothing` to skip refinement.
+Used by LO-RANSAC strategies (`ConvergeThenRescore`, `StepAndRescore`)
+for iterative refit-resweep cycles. The `strategy` is resolved from
+`fit_strategy(lo)` where `lo` is the active `AbstractLocalOptimization`.
 
-Default: `nothing` (no refinement). Override to add LO-RANSAC behavior.
-The `mask` is a BitVector where `true` indicates an inlier.
+Default: `nothing` (problem does not support WLS fitting).
+
+See also: [`FitStrategy`](@ref), [`LinearFit`](@ref), [`fit_strategy`](@ref)
 """
-refine(::AbstractRansacProblem, _model, ::BitVector) = nothing
+fit(::AbstractRansacProblem, ::BitVector, ::AbstractVector, ::FitStrategy) = nothing
 
 """
     solver_jacobian(problem, sample_indices, model) -> NamedTuple or nothing
@@ -360,50 +305,8 @@ Default: `Constrained()`.
 """
 constraint_type(::AbstractRansacProblem) = Constrained()
 
-# =============================================================================
-# IRLS Extension Points
-# =============================================================================
-
-"""
-    weighted_system(problem, model, mask, w)
-
-Build a weighted constraint system for IRLS refinement.
-
-Returns a NamedTuple with at minimum `:A` (and `:b` for `Unconstrained`),
-plus any context needed by `model_from_solution` (e.g., normalization transforms).
-Returns `nothing` if the system cannot be built (too few inliers, etc.).
-"""
-function weighted_system end
-
-"""
-    model_from_solution(problem, x, sys)
-
-Convert the raw solution vector `x` and system context `sys` back to a model.
-Returns `nothing` if the solution is invalid.
-"""
-function model_from_solution end
-
 # NOTE: SVDWorkspace and svd_nullvec! are defined in VisualGeometryCore
 # (imported at module top level) since VGC's own solvers also need them.
-
-# =============================================================================
-# Trait-Dispatched Linear Solve
-# =============================================================================
-
-_ls_solve(::Constrained, A) = svd(A).Vt[end, :]
-_ls_solve(::Constrained, A, ws::SVDWorkspace) = svd_nullvec!(ws, A, size(A, 1), Val(9))
-_ls_solve(::Unconstrained, A, b) = (A' * A) \ (A' * b)
-
-_dispatch_solve(::Constrained, sys) = _ls_solve(Constrained(), sys.A)
-_dispatch_solve(::Constrained, sys, ws::SVDWorkspace) = _ls_solve(Constrained(), sys.A, ws)
-_dispatch_solve(::Unconstrained, sys) = _ls_solve(Unconstrained(), sys.A, sys.b)
-# Unconstrained + SVDWorkspace: some problems (e.g., HomographyProblem) use
-# Unconstrained for covariance estimation but their weighted_system returns
-# only (A, T₁, T₂) without a `b` field — fall back to SVD null-space.
-function _dispatch_solve(::Unconstrained, sys, ws::SVDWorkspace)
-    hasproperty(sys, :b) ? _ls_solve(Unconstrained(), sys.A, sys.b) :
-                           _ls_solve(Constrained(), sys.A, ws)
-end
 
 # =============================================================================
 # Problem Lifecycle: prepare! (called before RANSAC main loop)
@@ -441,67 +344,3 @@ function _build_sampler(correspondences, m)
     end
 end
 
-# =============================================================================
-# RansacRefineProblem — Adapter for IRLS refinement of RANSAC models
-# =============================================================================
-
-"""
-    RansacRefineProblem{P,W} <: AbstractRobustProblem
-
-Adapter wrapping an `AbstractRansacProblem` as an `AbstractRobustProblem`,
-allowing `robust_solve(adapter, MEstimator(...))` to serve as IRLS refinement.
-
-The three-step RANSAC solve (build system → SVD → reconstruct model) is
-encapsulated in `weighted_solve`.
-
-# Constructor
-```julia
-adapter = RansacRefineProblem(ransac_problem, mask, svd_workspace)
-result = robust_solve(adapter, MEstimator(loss); init=model, scale=FixedScale(σ=σ), max_iter=5)
-```
-
-Always used with `init` kwarg — `initial_solve` is not defined.
-"""
-struct RansacRefineProblem{P<:AbstractRansacProblem, W} <: AbstractRobustProblem
-    problem::P
-    mask::BitVector
-    svd_ws::W  # Union{Nothing, SVDWorkspace}
-end
-
-data_size(a::RansacRefineProblem) = data_size(a.problem)
-problem_dof(a::RansacRefineProblem) = sample_size(a.problem)
-
-function compute_residuals!(r::AbstractVector, a::RansacRefineProblem, model)
-    residuals!(r, a.problem, model)
-end
-
-function compute_residuals(a::RansacRefineProblem, model)
-    r = Vector{Float64}(undef, data_size(a.problem))
-    residuals!(r, a.problem, model)
-    r
-end
-
-function weighted_solve(a::RansacRefineProblem, model, ω)
-    # Zero out non-inlier weights
-    @inbounds for i in eachindex(ω, a.mask)
-        if !a.mask[i]
-            ω[i] = zero(eltype(ω))
-        end
-    end
-
-    sys = weighted_system(a.problem, model, a.mask, ω)
-    isnothing(sys) && return model
-
-    x = if !isnothing(a.svd_ws)
-        _dispatch_solve(constraint_type(a.problem), sys, a.svd_ws)
-    else
-        _dispatch_solve(constraint_type(a.problem), sys)
-    end
-
-    model_new = model_from_solution(a.problem, x, sys)
-    isnothing(model_new) && return model
-    model_new
-end
-
-convergence_metric(::RansacRefineProblem, θ_new, θ_old) =
-    norm(θ_new - θ_old) / (norm(θ_new) + eps())

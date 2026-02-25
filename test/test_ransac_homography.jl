@@ -6,9 +6,7 @@ using VisualGeometryCore
 using VisualGeometryCore: ScoringTrait, HasScore, NoScore, scoring
 using RobustVisualGeometry
 using RobustVisualGeometry: sample_size, data_size, model_type,
-    solver_cardinality, SingleSolution, ProsacSampler, reset!,
-    RansacRefineProblem, MEstimator, FixedScale, robust_solve,
-    weighted_solve
+    solver_cardinality, SingleSolution, ProsacSampler, reset!
 using VisualGeometryCore.Matching: Attributed, ScoredCspond, csponds
 
 # =============================================================================
@@ -84,7 +82,7 @@ end
         @test_throws ArgumentError HomographyProblem(csponds(src[1:3], dst[1:3]))
 
         # UniformSampler for Pair correspondences
-        @test p isa HomographyProblem{Float64, UniformSampler}
+        @test p isa HomographyProblem{Float64}
     end
 
     @testset "ScoringTrait dispatch" begin
@@ -99,7 +97,7 @@ end
         dst = [SA[2.0, 3.0], SA[4.0, 5.0], SA[6.0, 7.0], SA[8.0, 9.0]]
         scored = [ScoredCspond(s, d, Float64(i)) for (i, (s, d)) in enumerate(zip(src, dst))]
         p = HomographyProblem(scored)
-        @test p isa HomographyProblem{Float64, ProsacSampler}
+        @test p isa HomographyProblem{Float64}
         @test sampler(p) isa ProsacSampler
     end
 
@@ -287,7 +285,7 @@ end
         @test max_reprojection_error(H, H_true, test_pts) < 3.0
     end
 
-    @testset "IRLS — weighted DLT roundtrip" begin
+    @testset "fit — weighted DLT roundtrip" begin
         H_raw = @SMatrix [
              0.95  -0.10  15.0;
              0.12   0.93  -8.0;
@@ -304,66 +302,59 @@ end
 
         p = HomographyProblem(csponds(src, dst))
         mask = trues(n)
+        w = ones(n)
 
-        # weighted_solve through RansacRefineProblem calls DLT directly
-        adapter = RansacRefineProblem(p, mask, p._svd_ws)
-        H_rec = weighted_solve(adapter, H_true, ones(n))
+        H_rec = fit(p, mask, w, LinearFit())
         @test !isnothing(H_rec)
 
         test_pts = [SA[300.0, 400.0], SA[600.0, 300.0], SA[450.0, 550.0]]
         @test max_reprojection_error(H_rec, H_true, test_pts) < 1e-8
     end
 
-    @testset "IRLS — L2Loss recovers clean homography" begin
-        H_raw = @SMatrix [
-             0.95  -0.10  15.0;
-             0.12   0.93  -8.0;
-             1e-4   2e-4   1.0
-        ]
-        H_raw = H_raw / norm(H_raw)
-        if H_raw[3,3] < 0; H_raw = -H_raw; end
-        H_true = HomographyMat{Float64}(Tuple(H_raw))
-
-        rng = MersenneTwister(42)
-        n = 30
-        noise = 0.3
-        src = [SA[100.0 + 800.0*rand(rng), 100.0 + 600.0*rand(rng)] for _ in 1:n]
-        warp = PerspectiveMap() ∘ ProjectiveMap(H_true)
-        dst = [warp(s) + SA[noise*randn(rng), noise*randn(rng)] for s in src]
-
+    @testset "fit — too few inliers returns nothing" begin
+        src = [SA[100.0, 200.0], SA[300.0, 400.0], SA[500.0, 600.0], SA[700.0, 800.0]]
+        dst = [SA[110.0, 210.0], SA[310.0, 410.0], SA[510.0, 610.0], SA[710.0, 810.0]]
         p = HomographyProblem(csponds(src, dst))
-        mask = trues(n)
 
-        # L2 IRLS (all weights = 1.0) should recover H well
-        adapter = RansacRefineProblem(p, mask, p._svd_ws)
-        result = robust_solve(adapter, MEstimator(L2Loss());
-                              init=H_true, scale=FixedScale(σ=1.0), max_iter=5)
-        H_irls = result.value
-
-        test_pts = [SA[300.0, 400.0], SA[600.0, 300.0], SA[450.0, 550.0]]
-        @test max_reprojection_error(H_irls, H_true, test_pts) < 1.0
+        mask = BitVector([true, true, true, true])  # 4 < 5 = min for DLT
+        @test isnothing(fit(p, mask, ones(4), LinearFit()))
     end
 
-    @testset "IRLS — Cauchy refine on noisy inliers" begin
+    @testset "LO-RANSAC — ConvergeThenRescore" begin
         source_pts, target_pts, H_true, n_inliers = make_homography_data(
-            n_inliers=100, n_outliers=30, noise=1.0, seed=42)
-
+            n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = HomographyProblem(csponds(source_pts, target_pts))
-        # Mask with known inliers only
-        mask = falses(length(source_pts))
-        mask[1:n_inliers] .= true
 
-        # IRLS with Cauchy should recover H well despite noisy inliers
-        adapter = RansacRefineProblem(problem, mask, problem._svd_ws)
-        result = robust_solve(adapter, MEstimator(CauchyLoss());
-                              init=H_true, scale=FixedScale(σ=1.0), max_iter=5)
-        H_irls = result.value
+        result = ransac(problem, MarginalQuality(problem, 50.0);
+                        local_optimization=ConvergeThenRescore(),
+                        config=RansacConfig(max_trials=3000, min_trials=200))
 
-        test_pts = [SA[300.0, 400.0], SA[600.0, 300.0], SA[450.0, 550.0]]
-        @test max_reprojection_error(H_irls, H_true, test_pts) < 3.0
+        @test result.converged
+        H = result.value
+        test_pts = [SA[300.0, 400.0], SA[600.0, 300.0], SA[450.0, 550.0],
+                    SA[200.0, 200.0], SA[700.0, 500.0]]
+        @test max_reprojection_error(H, H_true, test_pts) < 2.0
+        @test sum(result.inlier_mask) >= n_inliers * 0.7
     end
 
-    @testset "IRLS — full RANSAC integration" begin
+    @testset "LO-RANSAC — StepAndRescore" begin
+        source_pts, target_pts, H_true, n_inliers = make_homography_data(
+            n_inliers=100, n_outliers=30, noise=0.5, seed=42)
+        problem = HomographyProblem(csponds(source_pts, target_pts))
+
+        result = ransac(problem, MarginalQuality(problem, 50.0);
+                        local_optimization=StepAndRescore(),
+                        config=RansacConfig(max_trials=3000, min_trials=200))
+
+        @test result.converged
+        H = result.value
+        test_pts = [SA[300.0, 400.0], SA[600.0, 300.0], SA[450.0, 550.0],
+                    SA[200.0, 200.0], SA[700.0, 500.0]]
+        @test max_reprojection_error(H, H_true, test_pts) < 2.0
+        @test sum(result.inlier_mask) >= n_inliers * 0.7
+    end
+
+    @testset "Plain RANSAC integration" begin
         source_pts, target_pts, H_true, n_inliers = make_homography_data(
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = HomographyProblem(csponds(source_pts, target_pts))
@@ -472,7 +463,7 @@ end
         end
 
         problem = HomographyProblem(scored)
-        @test problem isa HomographyProblem{Float64, ProsacSampler}
+        @test problem isa HomographyProblem{Float64}
 
         result = ransac(problem, MarginalQuality(problem, 50.0);
                         config=RansacConfig(max_trials=3000, min_trials=200))

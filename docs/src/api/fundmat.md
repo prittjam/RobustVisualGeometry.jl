@@ -8,7 +8,6 @@ CurrentModule = RobustVisualGeometry
 
 ```@docs
 FundamentalMatrixProblem
-LoFundamentalMatrixProblem
 ```
 
 ## Problem Types

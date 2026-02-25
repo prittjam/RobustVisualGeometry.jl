@@ -90,7 +90,7 @@ from the top-m highest-scored matches and progressively expands the pool.
 - `T_n::Float64` — current T_n value (recurrence relation)
 - `T_n_prime::Int` — discretized cumulative threshold
 
-See also: [`reset!`](@ref), [`_draw_prosac!`](@ref)
+See also: `reset!`, `_draw_prosac!`
 """
 mutable struct ProsacSampler <: AbstractSampler
     sorted_indices::Vector{Int}

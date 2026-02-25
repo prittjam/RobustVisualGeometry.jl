@@ -38,7 +38,7 @@ src/
 │   ├── gnc.jl                 # Graduated Non-Convexity
 │   └── ransac/
 │       ├── types.jl           # FixedModels, RansacConfig, RansacWorkspace
-│       ├── traits.jl          # Holy traits: ConstraintType, JacobianCapability, etc.
+│       ├── traits.jl          # Holy traits: SolverCardinality, ConstraintType
 │       ├── samplers.jl        # UniformSampler, ProsacSampler
 │       ├── interface.jl       # AbstractRansacProblem API
 │       ├── scoring.jl         # MarginalQuality, PredictiveMarginalQuality, sweep!
@@ -73,14 +73,13 @@ Scoring files load before problem files. Problem-specific specializations go in 
 
 ### Holy Traits System
 
-Compile-time dispatch via traits defined in `estimators/ransac/traits.jl`:
+Compile-time dispatch via traits defined in `estimators/ransac/traits.jl` and `estimators/ransac/scoring.jl`:
 
-| Trait | Purpose |
-|-------|---------|
-| `ConstraintType` (`EqualityConstraint`, `InequalityConstraint`) | Constraint classification |
-| `JacobianCapability` (`HasJacobian`, `NoJacobian`) | Whether problem provides `residual_jacobian` |
-| `WeightedSystemCapability` (`HasWeightedSystem`, `NoWeightedSystem`) | Whether problem provides `weighted_system` |
-| `CovarianceStructure` (`Homoscedastic`, `Heteroscedastic`) | Measurement covariance model |
+| Trait | Values | Purpose |
+|-------|--------|---------|
+| `SolverCardinality` | `SingleSolution`, `MultipleSolutions` | Number of models per minimal sample |
+| `ConstraintType` | `Constrained`, `Unconstrained` | Gauge constraint (`Ah=0` via SVD) vs free coordinates (`Ax≈b` via WLS) |
+| `CovarianceStructure` | `Homoscedastic`, `Heteroscedastic`, `Predictive` | Constraint covariance shape Σ̃\_{gᵢ} for scoring (Section 3.3) |
 
 ## Code Conventions
 
@@ -117,7 +116,7 @@ Functions follow consistent argument ordering based on semantic role (adopted fr
    - Problem carries data, model is the hypothesis
    - Example: `test_model(problem, model, sample_indices)`
    - Example: `solve(problem, sample_indices)`
-   - Example: `refine(problem, model, inlier_mask)`
+   - Example: `fit(problem, inlier_mask, weights)`
 
 ## Git Commit Conventions
 

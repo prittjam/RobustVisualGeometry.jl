@@ -19,7 +19,7 @@
 # =============================================================================
 
 """
-    HomographyProblem{T,S,R} <: AbstractCspondProblem{T}
+    HomographyProblem{T,S} <: AbstractCspondProblem{T}
 
 RANSAC problem for estimating a 2D projective homography from point correspondences.
 
@@ -28,14 +28,11 @@ Estimates H such that `u₂ ~ H * [u₁; 1]` (in homogeneous coordinates).
 Type parameters:
 - `T`: Element type (Float64, etc.)
 - `S <: AbstractSampler`: Sampling strategy (uniform, PROSAC)
-- `R <: AbstractRefinement`: LO-RANSAC refinement strategy
 
 # Constructor
 ```julia
 cs = [SA[1.0,2.0] => SA[3.0,4.0], ...]
-HomographyProblem(cs)                                  # plain RANSAC (default)
-HomographyProblem(cs; refinement=DltRefinement())      # DLT refit only
-HomographyProblem(cs; refinement=IrlsRefinement())     # LO-RANSAC (IRLS)
+HomographyProblem(cs)
 ```
 
 # Solver Details
@@ -43,31 +40,16 @@ HomographyProblem(cs; refinement=IrlsRefinement())     # LO-RANSAC (IRLS)
 - Model type: `HomographyMat{T}` (Frobenius-normalized, H[3,3] >= 0)
 - Residual: Sampson distance (EIV-corrected)
 - Degeneracy: Collinearity + convexity check
-- Refinement: Controlled by `R` type parameter
 """
-struct HomographyProblem{T<:AbstractFloat, S<:AbstractSampler, R<:AbstractRefinement} <: AbstractCspondProblem{T}
+struct HomographyProblem{T<:AbstractFloat, S<:AbstractSampler} <: AbstractCspondProblem{T}
     cs::StructArrays.StructVector{Pair{SVector{2,T},SVector{2,T}}, @NamedTuple{first::Vector{SVector{2,T}}, second::Vector{SVector{2,T}}}}
     _sampler::S
-    _refinement::R
     _dlt_buf::FixedSizeArray{T,2,Memory{T}}
     _svd_ws::SVDWorkspace{T}
 end
 
-HomographyProblem(correspondences::AbstractVector;
-                  refinement::AbstractRefinement=NoRefinement()) =
-    _make_cspond_problem(HomographyProblem, correspondences, 4, n -> 2n; refinement)
-
-"""
-    LoHomographyProblem(correspondences; refinement=IrlsRefinement())
-
-Convenience constructor for LO-RANSAC homography estimation.
-
-Equivalent to `HomographyProblem(cs; refinement=IrlsRefinement())`.
-Returns a `HomographyProblem` with IRLS refinement enabled by default.
-"""
-LoHomographyProblem(correspondences::AbstractVector;
-                    refinement::AbstractRefinement=IrlsRefinement()) =
-    HomographyProblem(correspondences; refinement)
+HomographyProblem(correspondences::AbstractVector) =
+    _make_cspond_problem(HomographyProblem, correspondences, 4, n -> 2n)
 
 # =============================================================================
 # AbstractRansacProblem Interface
@@ -107,12 +89,11 @@ function test_model(p::HomographyProblem{T}, H::HomographyMat{T},
 end
 
 # =============================================================================
-# AbstractCspondProblem Dispatch Points
+# fit — Weighted DLT for LO-RANSAC
 # =============================================================================
 
-min_dlt_inliers(::HomographyProblem) = 5
-
-function _dlt_refit(p::HomographyProblem; mask=nothing, weights=nothing)
+function fit(p::HomographyProblem, mask::BitVector, weights::AbstractVector, ::LinearFit)
+    sum(mask) < 5 && return nothing
     homography_dlt!(p._dlt_buf, p.cs.first, p.cs.second;
                      mask, weights, svd_ws=p._svd_ws)
 end

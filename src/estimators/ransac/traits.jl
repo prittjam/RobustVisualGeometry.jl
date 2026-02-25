@@ -76,3 +76,30 @@ The IRLS refinement solves `Ax ≈ b` via normal equations, and the
 covariance is σ²·inv(I) where I is the Fisher information.
 """
 struct Unconstrained <: ConstraintType end
+
+# -----------------------------------------------------------------------------
+# Holy Trait: Fit Strategy — Dispatch axis for LO-RANSAC refit solver
+# -----------------------------------------------------------------------------
+
+"""
+    FitStrategy
+
+Holy Trait for the solver used by `fit(problem, mask, weights, strategy)` during
+local optimization. Allows multiple LO types to share a solver via a common
+trait value.
+
+Built-in strategies:
+- `LinearFit()`: linear algebraic refit (DLT via SVD null-space, or GEP/EIV)
+
+See also: [`LinearFit`](@ref), [`fit_strategy`](@ref)
+"""
+abstract type FitStrategy end
+
+"""
+    LinearFit <: FitStrategy
+
+Linear algebraic refit: covers null-space DLT (Ah=0 via SVD) for correspondence
+problems and GEP/EIV solvers for line fitting. Used by `ConvergeThenRescore`
+and `StepAndRescore`.
+"""
+struct LinearFit <: FitStrategy end

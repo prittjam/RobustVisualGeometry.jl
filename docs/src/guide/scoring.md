@@ -1,8 +1,7 @@
 # Scoring Functions
 
 This page describes the scoring functions used by RANSAC for model selection.
-The theory is based on "Inlier Tests and Covariance Propagation for RANSAC
-with Known and Unknown Scale" (Pritts, 2025).
+The theory is based on "RANSAC Done Right" (Pritts, ECCV 2026).
 
 ## Overview
 
@@ -94,16 +93,21 @@ scoring type. Most problems with scalar residuals use `Homoscedastic`.
 
 ## Local Optimization (LO-RANSAC)
 
-Local optimization refines promising hypotheses during the RANSAC loop.
-The `Lo` prefix problem variants (e.g., `LoHomographyProblem`) enable local
-optimization, which performs a simple refit + rescore cycle controlled by
-`max_lo_iter` in [`RansacConfig`](@ref).
+Local optimization refines promising hypotheses during the RANSAC loop via
+alternating refit-resweep cycles. Controlled via the `local_optimization`
+kwarg to `ransac()`:
+
+- `NoLocalOptimization()` — no local optimization (default)
+- `ConvergeThenRescore()` — WLS to convergence at fixed mask, then re-sweep (Strategy A)
+- `StepAndRescore()` — single WLS step, then re-sweep (Strategy B)
+
+Problems that support LO-RANSAC implement `fit(problem, mask, weights)`.
 
 ```julia
-# LO-RANSAC with default settings
-problem = LoHomographyProblem(csponds(src, dst))
+# LO-RANSAC with ConvergeThenRescore
+problem = HomographyProblem(csponds(src, dst))
 scoring = MarginalQuality(problem, 50.0)
-result = ransac(problem, scoring)
+result = ransac(problem, scoring; local_optimization=ConvergeThenRescore())
 ```
 
 ## Algorithm: Optimal Partition via Sweep (Algorithm 1)

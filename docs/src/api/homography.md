@@ -8,7 +8,6 @@ CurrentModule = RobustVisualGeometry
 
 ```@docs
 HomographyProblem
-LoHomographyProblem
 ```
 
 ## Fitting Functions

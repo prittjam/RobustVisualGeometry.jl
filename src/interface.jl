@@ -82,7 +82,6 @@ function compute_residuals end
     compute_residuals!(r::AbstractVector, prob::AbstractRobustProblem, θ)
 
 Compute signed residuals in-place into `r`. Default copies from `compute_residuals`.
-Override for problems that can avoid allocation (e.g., `RansacRefineProblem`).
 """
 function compute_residuals!(r::AbstractVector, prob::AbstractRobustProblem, θ)
     copyto!(r, compute_residuals(prob, θ))

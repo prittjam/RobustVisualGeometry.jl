@@ -129,12 +129,12 @@ export coef, residuals, weights, scale, converged, niter
 # -----------------------------------------------------------------------------
 # 6. RANSAC - Random Sample Consensus
 # -----------------------------------------------------------------------------
-export AbstractRansacProblem, FixedModels, RansacRefineProblem
-export AbstractRefinement, NoRefinement, DltRefinement, IrlsRefinement
+export AbstractRansacProblem, FixedModels
 export AbstractQualityFunction
 export AbstractMarginalQuality, MarginalQuality, PredictiveMarginalQuality
-export AbstractLocalOptimization, NoLocalOptimization
+export AbstractLocalOptimization, NoLocalOptimization, ConvergeThenRescore, StepAndRescore
 export default_local_optimization
+export FitStrategy, LinearFit, fit_strategy
 export AbstractSampler, UniformSampler, ProsacSampler, sampler
 export RansacConfig, RansacEstimate, RansacAttributes
 export residual_jacobian, solver_jacobian, measurement_logdets!, model_covariance
@@ -144,8 +144,8 @@ export SVDWorkspace, svd_nullvec!
 
 # RANSAC problem interface methods
 export sample_size, model_type, solve, residuals!, test_sample, test_model
-export refine, solver_cardinality, draw_sample!, test_consensus
-export constraint_type, weighted_system, model_from_solution
+export fit, solver_cardinality, draw_sample!, test_consensus
+export constraint_type
 
 # -----------------------------------------------------------------------------
 # 7. CONIC FITTING - Algebraic, Taubin, FNS, Robust FNS, Lifted FNS, Geometric
@@ -161,7 +161,7 @@ export ConicTaubinProblem, ConicFNSProblem
 # -----------------------------------------------------------------------------
 # 8. LINE FITTING - Orthogonal distance with per-point covariances
 # -----------------------------------------------------------------------------
-export LineFittingProblem, LoLineFittingProblem
+export LineFittingProblem
 export InhomLineFittingProblem, EivLineFittingProblem
 export fit_line_ransac
 
@@ -169,8 +169,8 @@ export fit_line_ransac
 # 9. RANSAC PROBLEM TYPES - Correspondence problems
 # -----------------------------------------------------------------------------
 export AbstractCspondProblem
-export HomographyProblem, LoHomographyProblem
-export FundamentalMatrixProblem, LoFundamentalMatrixProblem
+export HomographyProblem
+export FundamentalMatrixProblem
 export P3PProblem, Pose3
 
 # -----------------------------------------------------------------------------

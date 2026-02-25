@@ -22,8 +22,7 @@ Iteratively Reweighted Least Squares. `GNCEstimator` wraps a GNC-compatible loss
 AbstractRobustProblem                        Generic robust optimization
 ├── LinearRobustProblem                      Ax ≈ b with outliers
 ├── ConicTaubinProblem / ConicFNSProblem     Conic fitting
-├── FMatTaubinProblem / FMatFNSProblem       F-matrix fitting
-└── RansacRefineProblem                      Wraps RANSAC problem for IRLS
+└── FMatTaubinProblem / FMatFNSProblem       F-matrix fitting
 ```
 
 Each problem type implements a standard interface: `initial_solve`, `compute_residuals!`,
@@ -33,14 +32,14 @@ Each problem type implements a standard interface: `initial_solve`, `compute_res
 
 ```
 AbstractRansacProblem                        RANSAC problem interface
-├── LineFittingProblem / LoLineFittingProblem
-├── HomographyProblem / LoHomographyProblem
-├── FundamentalMatrixProblem / LoFundamentalMatrixProblem
+├── LineFittingProblem
+├── HomographyProblem
+├── FundamentalMatrixProblem
 └── P3PProblem
 ```
 
 RANSAC problems implement: `sample_size`, `data_size`, `model_type`, `solve`,
-`residuals!`, and optionally `test_sample`, `test_model`, `refine`.
+`residuals!`, and optionally `test_sample`, `test_model`, `fit`.
 
 ### Quality Functions
 
@@ -53,17 +52,17 @@ AbstractQualityFunction                      RANSAC quality scoring
 Quality functions score model hypotheses. `MarginalQuality` and `PredictiveMarginalQuality`
 use Bayesian marginal likelihoods for automatic threshold and scale selection.
 
-## Composable Refinement
+## Local Optimization (LO-RANSAC)
 
-RANSAC refinement is composable via the `AbstractRefinement` trait:
+Local optimization refines promising hypotheses during the RANSAC loop via
+alternating refit-resweep cycles. Controlled by `AbstractLocalOptimization`:
 
-- `NoRefinement` — use the minimal sample solution as-is
-- `DltRefinement` — refit with DLT on inliers
-- `IrlsRefinement` — refit with IRLS on inliers (most robust)
+- `NoLocalOptimization` — no local optimization (default)
+- `ConvergeThenRescore` — WLS to convergence, then re-sweep (Strategy A)
+- `StepAndRescore` — single WLS step, then re-sweep (Strategy B)
 
-Local optimization (LO-RANSAC) is controlled via `AbstractLocalOptimization`:
-
-- `NoLocalOptimization` — no local optimization
+Problems that support LO-RANSAC implement `fit(problem, mask, weights)` for
+weighted least-squares fitting on the inlier subset.
 
 ## Holy Trait Dispatch
 
@@ -71,8 +70,10 @@ Key traits that control RANSAC behavior at compile time:
 
 | Trait | Values | Purpose |
 |-------|--------|---------|
-| `SolverCardinality` | `SingleSolution`, `MultipleSolutions` | Number of models per sample |
-| `ConstraintType` | `Constrained`, `Unconstrained` | Whether the system needs SVD null-space |
+| `SolverCardinality` | `SingleSolution`, `MultipleSolutions` | Number of models per minimal sample |
+| `ConstraintType` | `Constrained`, `Unconstrained` | Gauge constraint (`Ah=0` via SVD) vs free coordinates (`Ax≈b` via WLS) |
+| `CovarianceStructure` | `Homoscedastic`, `Heteroscedastic`, `Predictive` | Constraint covariance shape Σ̃\_{gᵢ} for scoring (Section 3.3) |
+| `FitStrategy` | `LinearFit` | Solver for LO-RANSAC refit (`fit_strategy(lo)` maps LO type → solver) |
 
 ## Dependency on VisualGeometryCore
 

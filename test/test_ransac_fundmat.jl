@@ -7,9 +7,7 @@ using VisualGeometryCore
 using VisualGeometryCore: ScoringTrait, HasScore, NoScore, scoring
 using RobustVisualGeometry
 using RobustVisualGeometry: sample_size, data_size, model_type,
-    solver_cardinality, MultipleSolutions,
-    RansacRefineProblem, MEstimator, FixedScale, robust_solve,
-    weighted_solve
+    solver_cardinality, MultipleSolutions
 using VisualGeometryCore.Matching: Attributed, ScoredCspond, csponds
 
 # =============================================================================
@@ -138,7 +136,7 @@ end
         @test_throws ArgumentError FundamentalMatrixProblem(csponds(src[1:6], dst[1:6]))
 
         # UniformSampler for Pair correspondences
-        @test p isa FundamentalMatrixProblem{Float64, UniformSampler}
+        @test p isa FundamentalMatrixProblem{Float64}
     end
 
     @testset "Cubic solver" begin
@@ -217,14 +215,14 @@ end
         @test maximum(r) < 20.0
     end
 
-    @testset "N-point DLT solver" begin
+    @testset "fit — DLT roundtrip" begin
         src, dst, F_true = make_exact_fundmat_data(n=20)
-        p = FundamentalMatrixProblem(csponds(src, dst); refinement=DltRefinement())
+        p = FundamentalMatrixProblem(csponds(src, dst))
         mask = trues(20)
+        w = ones(20)
 
-        result = refine(p, F_true, mask)
-        @test !isnothing(result)
-        F_ref, σ = result
+        F_ref = fit(p, mask, w, LinearFit())
+        @test !isnothing(F_ref)
 
         # Should satisfy epipolar constraint on exact data
         max_err = maximum(epipolar_error(s, d, F_ref) for (s, d) in zip(src, dst))
@@ -306,44 +304,46 @@ end
         @test sv[3] / sv[1] < 0.01
     end
 
-    @testset "IRLS — weighted DLT roundtrip" begin
-        src, dst, F_true = make_exact_fundmat_data(n=20)
+    @testset "fit — too few inliers returns nothing" begin
+        src, dst, _ = make_exact_fundmat_data(n=7)
         p = FundamentalMatrixProblem(csponds(src, dst))
-        mask = trues(20)
-
-        # weighted_solve through RansacRefineProblem calls DLT directly
-        adapter = RansacRefineProblem(p, mask, p._svd_ws)
-        F_rec = weighted_solve(adapter, F_true, ones(20))
-        @test !isnothing(F_rec)
-
-        # Should satisfy epipolar constraint
-        max_err = maximum(epipolar_error(s, d, F_rec) for (s, d) in zip(src, dst))
-        @test max_err < 1e-6
+        mask = trues(7)  # 7 < 8 = min for DLT
+        @test isnothing(fit(p, mask, ones(7), LinearFit()))
     end
 
-    @testset "IRLS — L2Loss recovers clean F" begin
-        src, dst, F_true = make_exact_fundmat_data(n=30)
-        # Add small noise
-        rng = MersenneTwister(42)
-        noise = 0.3
-        src_n = [s + SA[noise*randn(rng), noise*randn(rng)] for s in src]
-        dst_n = [d + SA[noise*randn(rng), noise*randn(rng)] for d in dst]
+    @testset "LO-RANSAC — ConvergeThenRescore" begin
+        source_pts, target_pts, F_true, n_inliers = make_fundmat_data(
+            n_inliers=100, n_outliers=30, noise=0.5, seed=42)
+        problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
 
-        p = FundamentalMatrixProblem(csponds(src_n, dst_n))
-        mask = trues(30)
+        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
+                        local_optimization=ConvergeThenRescore(),
+                        config=RansacConfig(max_trials=5000, min_trials=500))
 
-        adapter = RansacRefineProblem(p, mask, p._svd_ws)
-        result = robust_solve(adapter, MEstimator(L2Loss());
-                              init=F_true, scale=FixedScale(σ=1.0), max_iter=5)
-        F_irls = result.value
-
-        # Sampson distance on clean (non-noisy) data should be reasonable
-        # (IRLS fits to noisy data, so some deviation from clean ground truth is expected)
-        errs = [sampson_distance(s, d, F_irls) for (s, d) in zip(src, dst)]
-        @test median(errs) < 3.0
+        @test result.converged
+        F = result.value
+        sv = svdvals(F)
+        @test sv[3] / sv[1] < 0.01
+        @test sum(result.inlier_mask) >= n_inliers * 0.6
     end
 
-    @testset "IRLS — full RANSAC integration" begin
+    @testset "LO-RANSAC — StepAndRescore" begin
+        source_pts, target_pts, F_true, n_inliers = make_fundmat_data(
+            n_inliers=100, n_outliers=30, noise=0.5, seed=42)
+        problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
+
+        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
+                        local_optimization=StepAndRescore(),
+                        config=RansacConfig(max_trials=5000, min_trials=500))
+
+        @test result.converged
+        F = result.value
+        sv = svdvals(F)
+        @test sv[3] / sv[1] < 0.01
+        @test sum(result.inlier_mask) >= n_inliers * 0.6
+    end
+
+    @testset "Plain RANSAC integration" begin
         source_pts, target_pts, F_true, n_inliers = make_fundmat_data(
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))

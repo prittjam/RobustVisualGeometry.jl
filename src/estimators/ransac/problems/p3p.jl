@@ -169,5 +169,3 @@ end
 function test_model(::P3PProblem, pose::Pose3, ::Vector{Int})
     return all(isfinite, pose.t)
 end
-
-refine(::P3PProblem, ::Pose3, ::BitVector) = nothing

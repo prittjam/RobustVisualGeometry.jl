@@ -171,7 +171,7 @@ function _try_model!(ws::RansacWorkspace{M,T}, problem,
     test_consensus(problem, model, ws.mask) || return (best_g, best_l)
 
     # Phase 2: Local optimization
-    lo = _lo_refine!(ws, problem, model, local_optimization, scoring)
+    lo = _locally_optimize!(ws, problem, model, local_optimization, scoring)
 
     # Phase 3: Re-score refined model (always model-certain)
     score_l, _ = _rescore_model_certain!(ws, problem, scoring, lo.model)
@@ -211,6 +211,7 @@ Re-score a model using squared residuals and model-certain penalties.
 Used by both `_try_model!` (Phase 3) and `_finalize` after local optimization.
 """
 function _rescore_model_certain!(ws, problem, scoring, model)
+    residuals!(ws.residuals, problem, model)
     n = length(ws.residuals)
     @inbounds for i in 1:n
         ws.scores[i] = ws.residuals[i]^2
@@ -222,17 +223,100 @@ function _rescore_model_certain!(ws, problem, scoring, model)
 end
 
 # =============================================================================
-# _lo_refine! — Local Refinement Dispatch (refine only, no scoring)
+# _locally_optimize! — Local Refinement Dispatch (refine only, no scoring)
 # =============================================================================
 
 """
-    _lo_refine!(ws, problem, model, ::NoLocalOptimization, scoring) -> (; model, param_cov)
+    _locally_optimize!(ws, problem, model, ::NoLocalOptimization, scoring) -> (; model, param_cov)
 
 No-op: returns model unchanged.
 """
-function _lo_refine!(ws::RansacWorkspace{M,T}, problem, model::M,
+function _locally_optimize!(ws::RansacWorkspace{M,T}, problem, model::M,
                      ::NoLocalOptimization, scoring) where {M,T}
     return (; model, param_cov=nothing)
+end
+
+"""
+    _locally_optimize!(ws, problem, model, lo::ConvergeThenRescore, scoring)
+
+Strategy A (Algorithm 3): WLS to convergence at fixed mask, then re-sweep.
+Repeat until score does not improve.
+"""
+function _locally_optimize!(ws::RansacWorkspace{M,T}, problem, model::M,
+                     lo::ConvergeThenRescore, scoring) where {M,T}
+    n = data_size(problem)
+    best_model = model
+    best_score = typemin(T)
+    strat = fit_strategy(lo)
+
+    w = ws.penalties  # reuse penalties buffer as weight scratch
+    @inbounds for i in 1:n
+        w[i] = ws.mask[i] ? one(T) : zero(T)
+    end
+
+    θ = model
+    for outer in 1:lo.max_outer_iter
+        # Step 1: Refit — WLS to convergence at fixed mask
+        for _ in 1:lo.max_fit_iter
+            θ_new = fit(problem, ws.mask, w, strat)
+            isnothing(θ_new) && break
+            θ_new == θ && break
+            θ = θ_new
+        end
+
+        # Step 2: Re-score and re-sweep
+        score_new, k = _rescore_model_certain!(ws, problem, scoring, θ)
+
+        score_new <= best_score && break
+        best_score = score_new
+        best_model = θ
+        mask!(ws, scoring.perm, k)
+
+        @inbounds for i in 1:n
+            w[i] = ws.mask[i] ? one(T) : zero(T)
+        end
+    end
+
+    return (; model=best_model, param_cov=nothing)
+end
+
+"""
+    _locally_optimize!(ws, problem, model, lo::StepAndRescore, scoring)
+
+Strategy B (Algorithm 4): Single WLS step, then re-sweep. Repeat until
+score does not improve.
+"""
+function _locally_optimize!(ws::RansacWorkspace{M,T}, problem, model::M,
+                     lo::StepAndRescore, scoring) where {M,T}
+    n = data_size(problem)
+    best_model = model
+    best_score = typemin(T)
+    strat = fit_strategy(lo)
+
+    w = ws.penalties
+    @inbounds for i in 1:n
+        w[i] = ws.mask[i] ? one(T) : zero(T)
+    end
+
+    θ = model
+    for outer in 1:lo.max_outer_iter
+        θ_new = fit(problem, ws.mask, w, strat)
+        isnothing(θ_new) && break
+        θ = θ_new
+
+        score_new, k = _rescore_model_certain!(ws, problem, scoring, θ)
+
+        score_new <= best_score && break
+        best_score = score_new
+        best_model = θ
+        mask!(ws, scoring.perm, k)
+
+        @inbounds for i in 1:n
+            w[i] = ws.mask[i] ? one(T) : zero(T)
+        end
+    end
+
+    return (; model=best_model, param_cov=nothing)
 end
 
 # =============================================================================
@@ -269,7 +353,7 @@ end
 # =============================================================================
 
 function _finalize(scoring::AbstractMarginalQuality,
-                   local_optimization::NoLocalOptimization,
+                   local_optimization::AbstractLocalOptimization,
                    ws, problem, best::Tuple, sar, trial)
     n = data_size(problem)
     M = model_type(problem)
@@ -296,13 +380,16 @@ function _finalize(scoring::AbstractMarginalQuality,
     copyto!(ws.residuals, ws.best_residuals)
     copyto!(ws.mask, ws.best_mask)
 
-    lo = _lo_refine!(ws, problem, model, local_optimization, scoring)
+    lo = _locally_optimize!(ws, problem, model, local_optimization, scoring)
 
     # Re-score to check if local optimization improved
     score_final, _ = _rescore_model_certain!(ws, problem, scoring, lo.model)
 
     if score_final >= best_score
         model = lo.model
+    else
+        # Restore residuals/mask for the original best model
+        _rescore_model_certain!(ws, problem, scoring, model)
     end
 
     s, nu, w = _inlier_scale_and_weights(ws.residuals, ws.mask, p)

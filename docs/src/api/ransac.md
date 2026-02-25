@@ -20,19 +20,10 @@ solve
 residuals!
 test_sample
 test_model
-refine
+fit
 solver_cardinality
 draw_sample!
 test_consensus
-```
-
-## Refinement
-
-```@docs
-AbstractRefinement
-NoRefinement
-DltRefinement
-IrlsRefinement
 ```
 
 ## Samplers
@@ -55,11 +46,29 @@ RansacAttributes
 ## Solver Traits
 
 ```@docs
+SolverCardinality
+SingleSolution
+MultipleSolutions
+ConstraintType
+Constrained
+Unconstrained
 constraint_type
-weighted_system
-model_from_solution
 codimension
 inlier_ratio
+```
+
+## Fit Strategy Trait
+
+```@docs
+FitStrategy
+LinearFit
+fit_strategy
+```
+
+## Workspace
+
+```@docs
+RansacWorkspace
 ```
 
 ## SVD Workspace
@@ -74,5 +83,4 @@ re-exported here for RANSAC solvers.
 
 ```@docs
 FixedModels
-RansacRefineProblem
 ```

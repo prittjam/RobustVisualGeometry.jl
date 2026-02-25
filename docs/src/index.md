@@ -17,6 +17,7 @@ Depends on [VisualGeometryCore.jl](https://github.com/prittjam/VisualGeometryCor
 Pages = [
     "guide/getting-started.md",
     "guide/architecture.md",
+    "guide/scoring.md",
     "guide/ransac.md",
     "guide/fitting.md",
     "guide/extending.md",

@@ -32,7 +32,7 @@ function fit_line_ransac(
     config::RansacConfig = RansacConfig(),
     outlier_halfwidth::Real = 50.0,
 )
-    problem = LoLineFittingProblem(points)
+    problem = LineFittingProblem(points)
     scoring = something(quality, MarginalQuality(problem, Float64(outlier_halfwidth)))
     ransac(problem, scoring; config)
 end

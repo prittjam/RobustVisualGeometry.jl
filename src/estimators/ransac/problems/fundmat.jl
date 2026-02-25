@@ -19,7 +19,7 @@
 # =============================================================================
 
 """
-    FundamentalMatrixProblem{T,S,R} <: AbstractCspondProblem{T}
+    FundamentalMatrixProblem{T,S} <: AbstractCspondProblem{T}
 
 RANSAC problem for estimating a fundamental matrix from point correspondences.
 
@@ -28,14 +28,11 @@ Estimates F such that `u₂ᵀ F u₁ = 0` (in homogeneous coordinates).
 Type parameters:
 - `T`: Element type (Float64, etc.)
 - `S <: AbstractSampler`: Sampling strategy (uniform, PROSAC)
-- `R <: AbstractRefinement`: LO-RANSAC refinement strategy
 
 # Constructor
 ```julia
 cs = [SA[1.0,2.0] => SA[3.0,4.0], ...]
-FundamentalMatrixProblem(cs)                                  # plain RANSAC (default)
-FundamentalMatrixProblem(cs; refinement=DltRefinement())      # DLT refit only
-FundamentalMatrixProblem(cs; refinement=IrlsRefinement())     # LO-RANSAC (IRLS)
+FundamentalMatrixProblem(cs)
 ```
 
 # Solver Details
@@ -43,31 +40,16 @@ FundamentalMatrixProblem(cs; refinement=IrlsRefinement())     # LO-RANSAC (IRLS)
 - Model type: `FundamentalMat{T}` (Frobenius-normalized, F[3,3] >= 0)
 - Residual: Sampson distance
 - Degeneracy: Oriented epipolar constraint
-- Refinement: Controlled by `R` type parameter
 """
-struct FundamentalMatrixProblem{T<:AbstractFloat, S<:AbstractSampler, R<:AbstractRefinement} <: AbstractCspondProblem{T}
+struct FundamentalMatrixProblem{T<:AbstractFloat, S<:AbstractSampler} <: AbstractCspondProblem{T}
     cs::StructArrays.StructVector{Pair{SVector{2,T},SVector{2,T}}, @NamedTuple{first::Vector{SVector{2,T}}, second::Vector{SVector{2,T}}}}
     _sampler::S
-    _refinement::R
     _dlt_buf::FixedSizeArray{T,2,Memory{T}}
     _svd_ws::SVDWorkspace{T}
 end
 
-FundamentalMatrixProblem(correspondences::AbstractVector;
-                         refinement::AbstractRefinement=NoRefinement()) =
-    _make_cspond_problem(FundamentalMatrixProblem, correspondences, 7, identity; refinement)
-
-"""
-    LoFundamentalMatrixProblem(correspondences; refinement=IrlsRefinement())
-
-Convenience constructor for LO-RANSAC fundamental matrix estimation.
-
-Equivalent to `FundamentalMatrixProblem(cs; refinement=IrlsRefinement())`.
-Returns a `FundamentalMatrixProblem` with IRLS refinement enabled by default.
-"""
-LoFundamentalMatrixProblem(correspondences::AbstractVector;
-                           refinement::AbstractRefinement=IrlsRefinement()) =
-    FundamentalMatrixProblem(correspondences; refinement)
+FundamentalMatrixProblem(correspondences::AbstractVector) =
+    _make_cspond_problem(FundamentalMatrixProblem, correspondences, 7, identity)
 
 # =============================================================================
 # AbstractRansacProblem Interface
@@ -130,12 +112,11 @@ test_sample(::FundamentalMatrixProblem, ::Vector{Int}) = true
 # The check is applied in solve() on the 7 sample points only.
 
 # =============================================================================
-# AbstractCspondProblem Dispatch Points
+# fit — Weighted DLT for LO-RANSAC
 # =============================================================================
 
-min_dlt_inliers(::FundamentalMatrixProblem) = 8
-
-function _dlt_refit(p::FundamentalMatrixProblem; mask=nothing, weights=nothing)
+function fit(p::FundamentalMatrixProblem, mask::BitVector, weights::AbstractVector, ::LinearFit)
+    sum(mask) < 8 && return nothing
     fundamental_matrix_dlt!(p._dlt_buf, p.cs.first, p.cs.second;
                              mask, weights, svd_ws=p._svd_ws)
 end

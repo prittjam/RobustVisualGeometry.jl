@@ -36,27 +36,32 @@ scoring = MarginalQuality(problem, 50.0)    # a = outlier half-width
 scoring = PredictiveMarginalQuality(problem, 50.0)
 ```
 
-## Refinement
+## Local Optimization (LO-RANSAC)
 
-### Global Refinement
-
-Applied to the final best model:
-
-| Type | Description |
-|------|-------------|
-| `NoRefinement()` | Use minimal sample solution |
-| `DltRefinement()` | Refit with DLT on inliers |
-| `IrlsRefinement()` | Refit with IRLS on inliers |
-
-### Local Optimization (LO-RANSAC)
-
-Applied during the RANSAC loop to promising hypotheses:
+Local optimization refines promising hypotheses during the RANSAC loop via
+alternating refit-resweep cycles. Problems that support LO-RANSAC implement
+`fit(problem, mask, weights, strategy)` for weighted least-squares fitting,
+where `strategy::FitStrategy` is resolved from `fit_strategy(lo)`.
+The default strategy is `LinearFit()` (DLT via SVD or GEP/EIV).
 
 | Type | Description |
 |------|-------------|
-| `NoLocalOptimization()` | No local optimization |
+| `NoLocalOptimization()` | No local optimization (default) |
+| `ConvergeThenRescore()` | WLS to convergence at fixed mask, then re-sweep. Repeat. |
+| `StepAndRescore()` | Single WLS step, then re-sweep. Repeat. |
 
-The `Lo` prefix variants (e.g., `LoHomographyProblem`) enable local optimization.
+```julia
+# LO-RANSAC with ConvergeThenRescore (Strategy A)
+problem = HomographyProblem(csponds(src, dst))
+scoring = MarginalQuality(problem, 50.0)
+result = ransac(problem, scoring; local_optimization=ConvergeThenRescore())
+
+# LO-RANSAC with StepAndRescore (Strategy B)
+result = ransac(problem, scoring; local_optimization=StepAndRescore())
+```
+
+Both strategies use monotonicity guards: the outer loop terminates when the
+score stops improving.
 
 ## Samplers
 

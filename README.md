@@ -37,10 +37,20 @@ println("Inliers: $(sum(inliers)) / $(length(inliers))")
 
 ```julia
 problem = FundamentalMatrixProblem(csponds(src, dst))
-scoring = ThresholdQuality(CauchyLoss(), 1.0, FixedScale())
+scoring = MarginalQuality(problem, 50.0)  # a = outlier half-width
 result = ransac(problem, scoring)
 
 F = result.value                          # 3×3 fundamental matrix
+```
+
+### LO-RANSAC (Local Optimization)
+
+```julia
+# ConvergeThenRescore: WLS to convergence, then re-sweep
+result = ransac(problem, scoring; local_optimization=ConvergeThenRescore())
+
+# StepAndRescore: single WLS step, then re-sweep
+result = ransac(problem, scoring; local_optimization=StepAndRescore())
 ```
 
 ### Robust Line Fitting
@@ -91,25 +101,29 @@ AbstractEstimator
 AbstractRobustProblem                        Generic robust optimization
 ├── LinearRobustProblem                      Ax ≈ b with outliers
 ├── ConicTaubinProblem / ConicFNSProblem     Conic fitting
-├── FMatTaubinProblem / FMatFNSProblem       F-matrix fitting
-└── RansacRefineProblem                      Wraps RANSAC problem for IRLS
+└── FMatTaubinProblem / FMatFNSProblem       F-matrix fitting
 
 AbstractRansacProblem                        RANSAC problem interface
-├── LineFittingProblem / LoLineFittingProblem
-├── HomographyProblem / LoHomographyProblem
-├── FundamentalMatrixProblem / LoFundamentalMatrixProblem
+├── LineFittingProblem
+├── HomographyProblem
+├── FundamentalMatrixProblem
 └── P3PProblem
 
 AbstractQualityFunction                      RANSAC quality scoring
 ├── MarginalQuality                          Threshold-free marginal likelihood
 └── PredictiveMarginalQuality                Prediction-corrected variant
+
+AbstractLocalOptimization                    LO-RANSAC strategies
+├── NoLocalOptimization                      No local optimization (default)
+├── ConvergeThenRescore                      WLS to convergence, then re-sweep
+└── StepAndRescore                           Single WLS step, then re-sweep
 ```
 
 ### Key design decisions
 
 - **Pluggable quality functions**: RANSAC loop is quality-agnostic via trait dispatch
-- **Composable refinement**: NoRefinement / DltRefinement / IrlsRefinement
-- **Holy trait dispatch**: `SolverCardinality` (SingleSolution vs MultipleSolutions), `CovarianceStructure` (Homoscedastic vs Heteroscedastic vs Predictive)
+- **LO-RANSAC via `fit`**: Problems implement `fit(problem, mask, weights)` for WLS refit; LO strategies (`ConvergeThenRescore`, `StepAndRescore`) alternate refit + re-sweep
+- **Holy trait dispatch**: `SolverCardinality` (SingleSolution vs MultipleSolutions), `ConstraintType` (Constrained vs Unconstrained), `CovarianceStructure` (Homoscedastic vs Heteroscedastic vs Predictive)
 - **Uncertainty quantification**: Full covariance propagation through Hartley normalization
 
 ## Documentation

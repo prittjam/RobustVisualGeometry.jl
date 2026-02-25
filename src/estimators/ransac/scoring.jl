@@ -63,6 +63,43 @@ refit. Default local optimization for all quality functions
 """
 struct NoLocalOptimization <: AbstractLocalOptimization end
 
+"""
+    ConvergeThenRescore <: AbstractLocalOptimization
+
+Strategy A (Algorithm 3): Run WLS to convergence at fixed inlier mask,
+then re-sweep to find the new optimal partition. Repeat until score
+does not improve.
+
+# Fields
+- `max_fit_iter::Int=5`: Max WLS iterations per outer loop
+- `max_outer_iter::Int=3`: Max refit-resweep outer iterations
+"""
+Base.@kwdef struct ConvergeThenRescore <: AbstractLocalOptimization
+    max_fit_iter::Int = 5
+    max_outer_iter::Int = 3
+end
+
+"""
+    StepAndRescore <: AbstractLocalOptimization
+
+Strategy B (Algorithm 4): Single WLS step, then re-sweep. Repeat until
+score does not improve. Keeps partition maximally current.
+
+# Fields
+- `max_outer_iter::Int=5`: Max step-resweep outer iterations
+"""
+Base.@kwdef struct StepAndRescore <: AbstractLocalOptimization
+    max_outer_iter::Int = 5
+end
+
+"""
+    fit_strategy(lo::AbstractLocalOptimization) -> FitStrategy
+
+Return the fit strategy trait for the given local optimization type.
+Default: `LinearFit()`.
+"""
+fit_strategy(::AbstractLocalOptimization) = LinearFit()
+
 # -----------------------------------------------------------------------------
 # Covariance Structure Trait (Section 3.3: Specializations)
 # -----------------------------------------------------------------------------
@@ -359,7 +396,7 @@ function sweep!(perm::Vector{Int}, lg_table::Vector{Float64},
         RSS += scores[idx]
         L += penalties[idx]
         k <= p && continue
-        RSS <= zero(T) && continue
+        RSS = max(RSS, eps(T))
         S = lg_table[k] - d2 * k * (log_pi + log(RSS)) - T(0.5) * L - (n - k) * d_g_T * log2a
         if S > best_S
             best_S = S

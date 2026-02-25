@@ -8,7 +8,6 @@ CurrentModule = RobustVisualGeometry
 
 ```@docs
 LineFittingProblem
-LoLineFittingProblem
 ```
 
 ## Other Problem Types

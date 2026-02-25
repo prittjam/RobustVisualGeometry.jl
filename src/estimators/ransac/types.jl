@@ -116,7 +116,7 @@ Access model via `result.value`, attributes via property forwarding:
 - `result.quality` — total model quality (higher = better)
 - `result.trials` — number of RANSAC trials
 
-See also: [`Attributed`](@ref), [`RansacAttributes`](@ref)
+See also: `Attributed` (from VisualGeometryCore), [`RansacAttributes`](@ref)
 """
 const RansacEstimate{M, T} = Attributed{M, RansacAttributes{T}}
 

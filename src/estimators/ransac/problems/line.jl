@@ -1,14 +1,10 @@
 # =============================================================================
-# RANSAC Line Fitting — LineFittingProblem, LoLineFittingProblem
+# RANSAC Line Fitting — LineFittingProblem
 # =============================================================================
 #
 # Implements AbstractRansacProblem for 2D line estimation from points with
 # optional per-point covariances. Uses standardized residuals for comparable
 # scoring across heterogeneous noise levels.
-#
-# Two problem types:
-# - LineFittingProblem: Plain RANSAC (no local optimization)
-# - LoLineFittingProblem: LO-RANSAC with weighted fit_line refinement on inliers
 #
 # =============================================================================
 
@@ -24,8 +20,8 @@ Plain RANSAC problem for estimating a 2D line from points with per-point covaria
 Residuals are **standardized**: `r_std[i] = (n⊤pᵢ + d) / √(n⊤Σᵢn)`, so all
 points contribute on a comparable scale regardless of their covariance shape.
 
-No local optimization — uses the minimal solver output directly. For LO-RANSAC
-with weighted `fit_line` refinement on inliers, use [`LoLineFittingProblem`](@ref).
+Supports LO-RANSAC via `fit(problem, mask, weights)` which performs weighted
+`fit_line` on the inlier subset.
 
 # Constructors
     LineFittingProblem(pts::AbstractVector{<:Uncertain{<:Point2}})
@@ -35,7 +31,7 @@ with weighted `fit_line` refinement on inliers, use [`LoLineFittingProblem`](@re
 - Minimal sample: 2 points (`SingleSolution`)
 - Model type: `Line2D{T}` (Hesse normal form)
 - Residual: Standardized orthogonal distance
-- Refinement: None (default `refine` returns `nothing`)
+- LO-RANSAC: `fit(p, mask, weights)` for weighted `fit_line` on inliers
 """
 struct LineFittingProblem{T} <: AbstractRansacProblem
     points::Vector{Point2{T}}
@@ -106,7 +102,53 @@ function test_sample(p::LineFittingProblem{T}, idx::Vector{Int}) where T
     end
 end
 
-# No refine method — uses default returning nothing
+# =============================================================================
+# fit — Weighted fit_line for LO-RANSAC
+# =============================================================================
+
+function fit(p::LineFittingProblem{T}, mask::BitVector, ::AbstractVector, ::LinearFit) where T
+    n_inliers = sum(mask)
+    n_inliers < 3 && return nothing
+    k = 0
+    @inbounds for i in eachindex(mask)
+        if mask[i]
+            k += 1
+            p._inlier_buf[k] = Uncertain(p.points[i], p.cov_shapes[i])
+        end
+    end
+    result = fit_line(@view p._inlier_buf[1:k])
+    return result.line.value
+end
+
+# --- residual_jacobian for LineFittingProblem ---
+#
+# Returns whitened residual, Jacobian, and log-determinant (Section 3, Eq. 5-7):
+#   rᵢ = r_raw / σᵢ, Gᵢ = [t⊤pᵢ/σᵢ, 1/σᵢ], ℓᵢ = log(σ²ᵢ) = log(n⊤Σᵢn)
+# where σᵢ = √(n⊤Σᵢn) is the projected per-point noise and Cᵢ = σ²ᵢ (scalar, dg=1).
+
+function residual_jacobian(p::LineFittingProblem{T},
+                                       model::Line2D{T}, i::Int) where T
+    nv = normal(model)
+    d_val = model.coeffs[3]
+    tv = SVector{2,T}(-nv[2], nv[1])  # tangent vector
+
+    @inbounds begin
+        pt = p.points[i]
+        Σ = p.cov_shapes[i]
+
+        r_raw = nv[1] * T(pt[1]) + nv[2] * T(pt[2]) + d_val
+        σ²ᵢ = nv[1]^2 * Σ[1,1] + 2*nv[1]*nv[2]*Σ[1,2] + nv[2]^2 * Σ[2,2]
+        σᵢ = sqrt(max(σ²ᵢ, eps(T)))
+        rᵢ = r_raw / σᵢ
+
+        tᵢ = tv[1] * T(pt[1]) + tv[2] * T(pt[2])
+        Gᵢ = SVector{2,T}(tᵢ / σᵢ, one(T) / σᵢ)
+
+        # ℓᵢ = log|Cᵢ| = log(σ²ᵢ) since dg=1 and Cᵢ = n⊤Σᵢn (scalar)
+        ℓᵢ = σ²ᵢ > eps(T) ? log(σ²ᵢ) : zero(T)
+    end
+    return (rᵢ, Gᵢ, ℓᵢ)
+end
 
 # =============================================================================
 # InhomLineFittingProblem — Simplest possible RANSAC problem (y = a + bx)
@@ -344,89 +386,3 @@ function residual_jacobian(p::EivLineFittingProblem{T},
 end
 
 constraint_type(::EivLineFittingProblem) = Unconstrained()
-
-# =============================================================================
-# LoLineFittingProblem — LO-RANSAC with weighted fit_line refinement
-# =============================================================================
-
-"""
-    LoLineFittingProblem{T} <: AbstractRansacProblem
-
-LO-RANSAC line fitting with weighted `fit_line` refinement on the inlier set.
-
-Wraps a [`LineFittingProblem`](@ref), delegating all base methods and adding
-`refine` for local optimization. Use this for better accuracy at the cost of
-additional computation per trial.
-
-# Constructors
-    LoLineFittingProblem(pts::AbstractVector{<:Uncertain{<:Point2}})
-    LoLineFittingProblem(pts::AbstractVector{<:Point2})  # identity covariances
-"""
-struct LoLineFittingProblem{T} <: AbstractRansacProblem
-    inner::LineFittingProblem{T}
-end
-
-LoLineFittingProblem(pts::AbstractVector{<:Uncertain{<:Point2}}) =
-    LoLineFittingProblem(LineFittingProblem(pts))
-LoLineFittingProblem(pts::AbstractVector{<:Point2}) =
-    LoLineFittingProblem(LineFittingProblem(pts))
-
-# Delegate base interface to inner LineFittingProblem
-sample_size(::LoLineFittingProblem) = 2
-codimension(::LoLineFittingProblem) = 1  # d_g = 1: signed distance is scalar
-data_size(p::LoLineFittingProblem) = data_size(p.inner)
-model_type(::LoLineFittingProblem{T}) where T = Line2D{T}
-solver_cardinality(::LoLineFittingProblem) = SingleSolution()
-solve(p::LoLineFittingProblem, idx::Vector{Int}) = solve(p.inner, idx)
-residuals!(r::Vector, p::LoLineFittingProblem{T}, line::Line2D{T}) where T =
-    residuals!(r, p.inner, line)
-test_sample(p::LoLineFittingProblem{T}, idx::Vector{Int}) where T =
-    test_sample(p.inner, idx)
-
-function refine(p::LoLineFittingProblem{T}, _line::Line2D{T}, mask::BitVector) where T
-    inner = p.inner
-    n_inliers = sum(mask)
-    n_inliers < 3 && return nothing
-    k = 0
-    @inbounds for i in eachindex(mask)
-        if mask[i]
-            k += 1
-            inner._inlier_buf[k] = Uncertain(inner.points[i], inner.cov_shapes[i])
-        end
-    end
-    result = fit_line(@view inner._inlier_buf[1:k])
-    return (result.line.value, sqrt(result.s²))
-end
-
-# --- residual_jacobian for LoLineFittingProblem ---
-#
-# Returns whitened residual, Jacobian, and log-determinant (Section 3, Eq. 5-7):
-#   rᵢ = r_raw / σᵢ, Gᵢ = [t⊤pᵢ/σᵢ, 1/σᵢ], ℓᵢ = log(σ²ᵢ) = log(n⊤Σᵢn)
-# where σᵢ = √(n⊤Σᵢn) is the projected per-point noise and Cᵢ = σ²ᵢ (scalar, dg=1).
-
-function residual_jacobian(p::LoLineFittingProblem{T},
-                                       model::Line2D{T}, i::Int) where T
-    inner = p.inner
-    nv = normal(model)
-    d_val = model.coeffs[3]
-    tv = SVector{2,T}(-nv[2], nv[1])  # tangent vector
-
-    @inbounds begin
-        pt = inner.points[i]
-        Σ = inner.cov_shapes[i]
-
-        r_raw = nv[1] * T(pt[1]) + nv[2] * T(pt[2]) + d_val
-        σ²ᵢ = nv[1]^2 * Σ[1,1] + 2*nv[1]*nv[2]*Σ[1,2] + nv[2]^2 * Σ[2,2]
-        σᵢ = sqrt(max(σ²ᵢ, eps(T)))
-        rᵢ = r_raw / σᵢ
-
-        tᵢ = tv[1] * T(pt[1]) + tv[2] * T(pt[2])
-        Gᵢ = SVector{2,T}(tᵢ / σᵢ, one(T) / σᵢ)
-
-        # ℓᵢ = log|Cᵢ| = log(σ²ᵢ) since dg=1 and Cᵢ = n⊤Σᵢn (scalar)
-        ℓᵢ = σ²ᵢ > eps(T) ? log(σ²ᵢ) : zero(T)
-    end
-    return (rᵢ, Gᵢ, ℓᵢ)
-end
-
-constraint_type(::LoLineFittingProblem) = Unconstrained()
