@@ -95,7 +95,7 @@ sample_size(::HomographyProblem) = 4
 model_type(::HomographyProblem{T}) where T = SMatrix{3,3,T,9}
 solver_cardinality(::HomographyProblem) = SingleSolution()
 codimension(::HomographyProblem) = 2  # d_g = 2: two constraint equations from v̄ = λHū
-measurement_covariance(::HomographyProblem) = Heteroscedastic()
+measurement_covariance(::HomographyProblem) = Homoscedastic()
 
 function solve(p::HomographyProblem, idx::Vector{Int})
     u₁ = p.cs.first; u₂ = p.cs.second
@@ -119,8 +119,31 @@ function test_sample(p::HomographyProblem{T}, idx::Vector{Int}) where T
         u₂[idx[1]], u₂[idx[2]], u₂[idx[3]], u₂[idx[4]])
 end
 
-function test_model(::HomographyProblem{T}, H::SMatrix{3,3,T,9}) where T
-    return abs(det(H)) > eps(T)
+"""
+    homography_jac_det(H::SMatrix{3,3}, u::SVector{2}) -> Float64
+
+Jacobian determinant of the homography `H` at source point `u`.
+
+Returns `det(J) = det(H) / w³` where `w = h₃₁u₁ + h₃₂u₂ + h₃₃`. This is the
+local area scaling factor at `u`, independent of H normalization. The sign encodes
+orientation: positive means orientation-preserving, negative means reversing.
+
+Verified against ForwardDiff (see test suite).
+"""
+@inline function homography_jac_det(H::SMatrix{3,3,T,9}, u::SVector{2,T}) where T
+    w = H[3,1] * u[1] + H[3,2] * u[2] + H[3,3]
+    w³ = w * w * w
+    return det(H) / w³
+end
+
+function test_model(p::HomographyProblem{T}, H::SMatrix{3,3,T,9},
+                    idx::Vector{Int}) where T
+    u₁ = p.cs.first
+    @inbounds for j in 1:4
+        dj = homography_jac_det(H, u₁[idx[j]])
+        (dj ≤ T(1e-4) || dj ≥ T(1e4)) && return false
+    end
+    return true
 end
 
 # =============================================================================

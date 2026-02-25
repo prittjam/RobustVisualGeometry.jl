@@ -1,131 +1,154 @@
 # =============================================================================
-# Line Fitting Example — "RANSAC Done Right" Paper
+# Line Fitting Example — All RANSAC Scoring Variants
 # =============================================================================
 #
-# Demonstrates scale-free marginal likelihood scoring on a simple
-# inhomogeneous line fitting problem (y = a + bx).
+# Demonstrates robust line fitting (y = a + bx) using InhomLineFittingProblem
+# with every scoring variant available in RobustVisualGeometry:
 #
-# Scoring variants:
-#   1. MarginalQuality — scale-free (Algorithm 1), no sigma needed
-#   2. PredictiveMarginalQuality — leverage-corrected (Algorithm 2)
+#   1. MarginalQuality — threshold-free marginal likelihood (Eq. 17)
+#   2. MarginalQuality + LO — with iterative refit
+#   3. PredictiveMarginalQuality + LO — leverage-corrected (Eq. 30)
+#   4. ThresholdQuality (MSAC) — classical fixed-threshold baseline
+#   5. ChiSquareQuality — chi-square inlier test baseline
 #
-# Usage:
-#   julia --project examples/line_fitting.jl
+# Run:  julia --project examples/line_fitting.jl
 #
 # =============================================================================
 
-using RobustVisualGeometry
-using Random
+using LinearAlgebra
 using StaticArrays
-using Printf
+using Random
+using RobustVisualGeometry
 
 # =============================================================================
 # Data Generation
 # =============================================================================
 
-function generate_line_data(; rng=MersenneTwister(42),
-                             a_true=2.0, b_true=3.0,
-                             n_inliers=80, n_outliers=40,
-                             noise_std=0.5, outlier_range=50.0,
-                             x_range=(-10.0, 10.0))
-    # Inliers: y = a + b*x + noise
-    x_in = range(x_range[1], x_range[2], length=n_inliers)
-    pts_in = [SA[x, a_true + b_true * x + noise_std * randn(rng)] for x in x_in]
+"""
+    generate_line_data(; n_inliers, n_outliers, noise, outlier_range, seed)
 
-    # Outliers: uniformly distributed
-    pts_out = [SA[x_range[1] + (x_range[2] - x_range[1]) * rand(rng),
-                  outlier_range * (rand(rng) - 0.5)] for _ in 1:n_outliers]
+Generate 2D points on `y = 0.5 + 2x` with Gaussian noise, plus uniform outliers.
+Returns `(points, true_params, n_inliers)` where `true_params = [a, b]`.
+"""
+function generate_line_data(; n_inliers::Int=150, n_outliers::Int=50,
+                              noise::Float64=0.3, outlier_range::Float64=50.0,
+                              seed::Int=42)
+    rng = MersenneTwister(seed)
+    a_true, b_true = 0.5, 2.0
 
-    pts = vcat(pts_in, pts_out)
-    return pts, n_inliers, (a=a_true, b=b_true)
+    points = SVector{2,Float64}[]
+
+    # Inliers: x uniform in [-5, 5], y = a + b*x + noise
+    for _ in 1:n_inliers
+        x = 10.0 * rand(rng) - 5.0
+        y = a_true + b_true * x + noise * randn(rng)
+        push!(points, SA[x, y])
+    end
+
+    # Outliers: uniform in [-outlier_range/2, outlier_range/2]^2
+    for _ in 1:n_outliers
+        x = outlier_range * rand(rng) - outlier_range / 2
+        y = outlier_range * rand(rng) - outlier_range / 2
+        push!(points, SA[x, y])
+    end
+
+    return points, SA[a_true, b_true], n_inliers
 end
 
 # =============================================================================
-# Helper: Print Results
+# Helper: Print Result Summary
 # =============================================================================
 
-function print_result(name, result, truth, n_inliers)
+function print_result(label::String, result, true_params)
     model = result.value
-    attrs = result.attributes
-    n = length(attrs.inlier_mask)
-    n_in = sum(attrs.inlier_mask)
-    true_inliers_found = sum(attrs.inlier_mask[1:n_inliers])
-    false_inliers = sum(attrs.inlier_mask[n_inliers+1:end])
+    n_inliers = sum(result.inlier_mask)
+    n_total = length(result.inlier_mask)
+    println("\n--- $label ---")
+    println("  Model:     y = $(round(model[1]; digits=4)) + $(round(model[2]; digits=4)) x")
+    println("  True:      y = $(true_params[1]) + $(true_params[2]) x")
+    println("  Param err: |da| = $(round(abs(model[1] - true_params[1]); digits=6)), " *
+            "|db| = $(round(abs(model[2] - true_params[2]); digits=6))")
+    println("  Inliers:   $n_inliers / $n_total ($(round(100*n_inliers/n_total; digits=1))%)")
+    println("  Scale:     $(round(result.scale; digits=6))")
+    println("  DOF:       $(result.dof)")
+    println("  Quality:   $(round(result.quality; digits=2))")
+    println("  Trials:    $(result.trials)")
 
-    @printf("  %-45s  a=%.3f  b=%.3f  |  inliers=%d/%d  true_in=%d  false_in=%d",
-            name, model[1], model[2], n_in, n, true_inliers_found, false_inliers)
-
-    if hasproperty(attrs, :scale) && !isnan(attrs.scale)
-        @printf("  s=%.3f", attrs.scale)
+    if hasproperty(result, :param_cov) && !isnothing(result.param_cov)
+        pc = result.param_cov
+        println("  Param cov: diag = [$(round(pc[1,1]; digits=8)), $(round(pc[2,2]; digits=8))]")
     end
-    if hasproperty(attrs, :dof) && attrs.dof > 0
-        @printf("  dof=%d", attrs.dof)
-    end
-    println()
 end
 
 # =============================================================================
-# Main
+# Standard Scenario: 75% inliers, moderate noise
 # =============================================================================
 
-function main()
-    println("=" ^ 80)
-    println("Line Fitting Example — RANSAC Scoring Comparison")
-    println("=" ^ 80)
+println("=" ^ 72)
+println("  Line Fitting Example: y = a + bx")
+println("=" ^ 72)
 
-    # --- Standard scenario ---
-    pts, n_inliers, truth = generate_line_data()
-    n = length(pts)
-    inlier_frac = n_inliers / n
-    println("\nScenario 1: $(n_inliers) inliers + $(n - n_inliers) outliers " *
-            "($(round(100*inlier_frac, digits=1))% inlier rate)")
-    println("  Ground truth: a=$(truth.a), b=$(truth.b), noise_std=0.5")
-    println()
+points, true_params, n_inliers = generate_line_data(
+    n_inliers=150, n_outliers=50, noise=0.3, seed=42)
+println("\nData: $(length(points)) points ($(n_inliers) inliers, " *
+        "$(length(points) - n_inliers) outliers, noise sigma=0.3)")
 
-    prob = InhomLineFittingProblem(pts)
-    config = RansacConfig(; max_trials=2000, confidence=0.999)
+prob = InhomLineFittingProblem(points)
+config = RansacConfig(max_trials=5000, min_trials=200)
 
-    # 1. MarginalQuality — no sigma needed (Algorithm 1)
-    scoring1 = MarginalQuality(prob, 50.0)
-    result1 = ransac(prob, scoring1; config)
-    print_result("MarginalQuality", result1, truth, n_inliers)
+# ---- 1. MarginalQuality (no LO) ----
+scoring1 = MarginalQuality(prob, 50.0)
+result1 = ransac(prob, scoring1; config)
+print_result("MarginalQuality (no LO)", result1, true_params)
 
-    # 2. PredictiveMarginalQuality — leverage-corrected (Algorithm 2)
-    scoring2 = PredictiveMarginalQuality(prob, 50.0)
-    result2 = ransac(prob, scoring2; config)
-    print_result("PredictiveMarginalQuality", result2, truth, n_inliers)
+# ---- 2. MarginalQuality + LO ----
+scoring2 = MarginalQuality(prob, 50.0; max_lo_iter=5)
+result2 = ransac(prob, scoring2; config)
+print_result("MarginalQuality + LO (5 iter)", result2, true_params)
 
-    # --- High-outlier scenario ---
-    println("\n" * "-" ^ 80)
-    pts_hard, n_in_hard, truth_hard = generate_line_data(;
-        rng=MersenneTwister(123),
-        a_true=1.0, b_true=-2.0,
-        n_inliers=30, n_outliers=70,
-        noise_std=1.0, outlier_range=100.0)
-    n_hard = length(pts_hard)
-    println("\nScenario 2: $(n_in_hard) inliers + $(n_hard - n_in_hard) outliers " *
-            "($(round(100*n_in_hard/n_hard, digits=1))% inlier rate — challenging)")
-    println("  Ground truth: a=$(truth_hard.a), b=$(truth_hard.b), noise_std=1.0")
-    println()
+# ---- 3. PredictiveMarginalQuality + LO ----
+scoring3 = PredictiveMarginalQuality(prob, 50.0; max_lo_iter=5)
+result3 = ransac(prob, scoring3; config)
+print_result("PredictiveMarginalQuality + LO (5 iter)", result3, true_params)
 
-    prob_hard = InhomLineFittingProblem(pts_hard)
-    config_hard = RansacConfig(; max_trials=5000, confidence=0.999)
+# ---- 4. ThresholdQuality (MSAC baseline) ----
+# Threshold chosen as ~3*noise_sigma for the truncation
+scoring4 = ThresholdQuality(L2Loss(), 1.0, FixedScale())
+result4 = ransac(prob, scoring4; config)
+print_result("ThresholdQuality / MSAC (threshold=1.0)", result4, true_params)
 
-    # Marginal — adapts automatically
-    s_hard1 = MarginalQuality(prob_hard, 100.0)
-    r_hard1 = ransac(prob_hard, s_hard1; config=config_hard)
-    print_result("MarginalQuality", r_hard1, truth_hard, n_in_hard)
+# ---- 5. ChiSquareQuality baseline ----
+# noise sigma ~0.3 for this problem, alpha=0.01
+scoring5 = ChiSquareQuality(FixedScale(σ=0.3), 0.01)
+result5 = ransac(prob, scoring5; config)
+print_result("ChiSquareQuality (sigma=0.3, alpha=0.01)", result5, true_params)
 
-    # Predictive — leverage-corrected
-    s_hard2 = PredictiveMarginalQuality(prob_hard, 100.0)
-    r_hard2 = ransac(prob_hard, s_hard2; config=config_hard)
-    print_result("PredictiveMarginalQuality", r_hard2, truth_hard, n_in_hard)
+# =============================================================================
+# High-Outlier Scenario: 25% inliers
+# =============================================================================
 
-    println("\n" * "=" ^ 80)
-    println("Key takeaway: MarginalQuality adapts to the noise level automatically,")
-    println("without requiring a sigma estimate. PredictiveMarginalQuality additionally")
-    println("accounts for the geometric conditioning of the minimal sample (leverage).")
-    println("=" ^ 80)
-end
+println("\n\n" * "=" ^ 72)
+println("  High-Outlier Scenario: 25% inliers")
+println("=" ^ 72)
 
-main()
+points_hard, true_params_hard, n_inliers_hard = generate_line_data(
+    n_inliers=50, n_outliers=150, noise=0.3, seed=99)
+println("\nData: $(length(points_hard)) points ($(n_inliers_hard) inliers, " *
+        "$(length(points_hard) - n_inliers_hard) outliers, noise sigma=0.3)")
+
+prob_hard = InhomLineFittingProblem(points_hard)
+config_hard = RansacConfig(max_trials=10_000, min_trials=500)
+
+# Marginal scoring adapts threshold automatically — no sigma needed
+scoring_m = MarginalQuality(prob_hard, 50.0; max_lo_iter=5)
+result_m = ransac(prob_hard, scoring_m; config=config_hard)
+print_result("MarginalQuality + LO (high outliers)", result_m, true_params_hard)
+
+# MSAC needs a good threshold choice — harder with unknown noise
+scoring_t = ThresholdQuality(L2Loss(), 1.0, FixedScale())
+result_t = ransac(prob_hard, scoring_t; config=config_hard)
+print_result("ThresholdQuality / MSAC (high outliers)", result_t, true_params_hard)
+
+println("\n" * "=" ^ 72)
+println("  Done.")
+println("=" ^ 72)

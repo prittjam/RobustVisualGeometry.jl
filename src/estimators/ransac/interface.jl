@@ -229,13 +229,17 @@ Default: `true` (no degeneracy check). Override for problem-specific checks.
 test_sample(::AbstractRansacProblem, ::Vector{Int}) = true
 
 """
-    test_model(problem::AbstractRansacProblem, model) -> Bool
+    test_model(problem::AbstractRansacProblem, model, sample_indices::Vector{Int}) -> Bool
 
-Check whether a fitted model is feasible (e.g., positive focal length).
+Check whether a fitted model is feasible (e.g., positive focal length, non-degenerate
+local geometry at the sample points).
+
+The `sample_indices` are the minimal sample indices used to fit the model, enabling
+point-specific validation (e.g., Jacobian determinant bounds at sample locations).
 
 Default: `true` (no feasibility check). Override for problem-specific checks.
 """
-test_model(::AbstractRansacProblem, _model) = true
+test_model(::AbstractRansacProblem, _model, _indices::Vector{Int}) = true
 
 """
     test_consensus(problem::AbstractRansacProblem, model, mask::BitVector) -> Bool

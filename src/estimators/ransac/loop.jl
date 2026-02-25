@@ -111,7 +111,7 @@ function _score_candidates!(ws, problem, scoring::AbstractMarginalQuality,
     isnothing(solutions) && return best
     best_g, best_l = best
     for model in solutions
-        test_model(problem, model) || continue
+        test_model(problem, model, ws.sample_indices) || continue
         best_g, best_l = _try_model!(ws, problem, scoring, local_optimization,
                                       model, best_g, best_l)
     end
@@ -177,7 +177,7 @@ function _try_model!(ws::RansacWorkspace{M,T}, problem,
     @inbounds for i in 1:n
         ws.scores[i] = ws.residuals[i]^2
     end
-    measurement_logdets!(ws.penalties, problem, lo.model)
+    _model_certain_penalties!(ws.penalties, problem, lo.model)
     score_l, k_l = sweep!(scoring, ws.scores, ws.penalties, n)
     mask!(ws, scoring.perm, k_l)
     score_l <= best_l && return (best_g, best_l)
@@ -185,6 +185,25 @@ function _try_model!(ws::RansacWorkspace{M,T}, problem,
     _update_best!(ws, lo.model)
     return (score_g, score_l)
 end
+
+# =============================================================================
+# _model_certain_penalties! — Trait-dispatched Phase 3 penalty computation
+# =============================================================================
+#
+# Phase 3 (re-scoring after LO) is always "model certain" (Σ_θ = 0), so the
+# penalty depends only on measurement_covariance(problem):
+#   Homoscedastic   → ℓᵢ = 0 (constant factor cancels in sweep)
+#   Heteroscedastic → ℓᵢ = log|Σ̃_{gᵢ}| via measurement_logdets!
+# =============================================================================
+
+_model_certain_penalties!(out, problem, model) =
+    _model_certain_penalties!(out, problem, model, measurement_covariance(problem))
+
+_model_certain_penalties!(out, ::AbstractRansacProblem, _, ::Homoscedastic) =
+    fill!(out, zero(eltype(out)))
+
+_model_certain_penalties!(out, problem, model, ::Heteroscedastic) =
+    measurement_logdets!(out, problem, model)
 
 # =============================================================================
 # _lo_refine! — Local Refinement Dispatch (refine only, no scoring)
@@ -238,7 +257,7 @@ function _finalize(scoring::AbstractMarginalQuality,
     @inbounds for i in 1:n
         ws.scores[i] = ws.residuals[i]^2
     end
-    measurement_logdets!(ws.penalties, problem, lo.model)
+    _model_certain_penalties!(ws.penalties, problem, lo.model)
     score_final, k_final = sweep!(scoring, ws.scores, ws.penalties, n)
     mask!(ws, scoring.perm, k_final)
 

@@ -166,7 +166,7 @@ function residuals!(r::Vector, p::P3PProblem, pose::Pose3)
     return r
 end
 
-function test_model(::P3PProblem, pose::Pose3)
+function test_model(::P3PProblem, pose::Pose3, ::Vector{Int})
     return all(isfinite, pose.t)
 end
 
