@@ -73,13 +73,13 @@ function sample_size end
 
 Return the concrete type of the model being estimated.
 
-Used to parameterize `RansacWorkspace{M,T}` for type-stable storage.
+Used to parameterize `RansacWorkspace{K,M,T}` for type-stable storage.
 Must be a concrete type (e.g., `SMatrix{3,3,Float64,9}`, `Vector{Float64}`).
 """
 function model_type end
 
 """
-    solve(problem::AbstractRansacProblem, indices::Vector{Int})
+    solve(problem::AbstractRansacProblem, indices::AbstractVector{Int})
 
 Fit model(s) from a minimal sample specified by `indices`.
 
@@ -136,14 +136,14 @@ Common values:
 function codimension end
 
 """
-    draw_sample!(indices::Vector{Int}, problem::AbstractRansacProblem)
+    draw_sample!(indices::AbstractVector{Int}, problem::AbstractRansacProblem)
 
 Fill `indices` with a random sample of data point indices (without replacement).
 
 Default: delegates to `draw!(indices, sampler(problem))`.
 Problems with a stored sampler just need to define `sampler(p::MyProblem) = p._sampler`.
 """
-function draw_sample!(indices::Vector{Int}, problem::AbstractRansacProblem)
+function draw_sample!(indices::AbstractVector{Int}, problem::AbstractRansacProblem)
     draw!(indices, sampler(problem))
     nothing
 end
@@ -161,16 +161,16 @@ Override for problems with a stored sampler field:
 sampler(p::AbstractRansacProblem) = UniformSampler(data_size(p))
 
 """
-    test_sample(problem::AbstractRansacProblem, indices::Vector{Int}) -> Bool
+    test_sample(problem::AbstractRansacProblem, indices::AbstractVector{Int}) -> Bool
 
 Check whether a sample is non-degenerate (e.g., points not collinear).
 
 Default: `true` (no degeneracy check). Override for problem-specific checks.
 """
-test_sample(::AbstractRansacProblem, ::Vector{Int}) = true
+test_sample(::AbstractRansacProblem, ::AbstractVector{Int}) = true
 
 """
-    test_model(problem::AbstractRansacProblem, model, sample_indices::Vector{Int}) -> Bool
+    test_model(problem::AbstractRansacProblem, model, sample_indices::AbstractVector{Int}) -> Bool
 
 Check whether a fitted model is feasible (e.g., positive focal length, non-degenerate
 local geometry at the sample points).
@@ -180,7 +180,7 @@ point-specific validation (e.g., Jacobian determinant bounds at sample locations
 
 Default: `true` (no feasibility check). Override for problem-specific checks.
 """
-test_model(::AbstractRansacProblem, _model, _indices::Vector{Int}) = true
+test_model(::AbstractRansacProblem, _model, _indices::AbstractVector{Int}) = true
 
 """
     test_consensus(problem::AbstractRansacProblem, model, mask::BitVector) -> Bool
@@ -222,7 +222,7 @@ if the problem does not support solver Jacobians.
 
 Default: `nothing` (problem does not provide solver Jacobian).
 """
-solver_jacobian(::AbstractRansacProblem, ::Vector{Int}, _model) = nothing
+solver_jacobian(::AbstractRansacProblem, ::AbstractVector{Int}, _model) = nothing
 
 """
     measurement_logdets!(out, problem, model)

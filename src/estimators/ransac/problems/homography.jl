@@ -61,7 +61,7 @@ solver_cardinality(::HomographyProblem) = SingleSolution()
 codimension(::HomographyProblem) = 2  # d_g = 2: two constraint equations from v̄ = λHū
 measurement_covariance(::HomographyProblem) = Homoscedastic()
 
-function solve(p::HomographyProblem, idx::Vector{Int})
+function solve(p::HomographyProblem, idx::AbstractVector{Int})
     u₁ = p.cs.first; u₂ = p.cs.second
     @inbounds homography_4pt(
         u₁[idx[1]], u₁[idx[2]], u₁[idx[3]], u₁[idx[4]],
@@ -71,22 +71,15 @@ end
 residuals!(r::Vector, p::HomographyProblem{T}, H::HomographyMat{T}) where T =
     sampson_distances!(r, H, p.cs)
 
-function test_sample(p::HomographyProblem{T}, idx::Vector{Int}) where T
+function test_sample(p::HomographyProblem{T}, idx::AbstractVector{Int}) where T
     u₁ = p.cs.first; u₂ = p.cs.second
     @inbounds _homography_sample_nondegenerate(
         u₁[idx[1]], u₁[idx[2]], u₁[idx[3]], u₁[idx[4]],
         u₂[idx[1]], u₂[idx[2]], u₂[idx[3]], u₂[idx[4]])
 end
 
-function test_model(p::HomographyProblem{T}, H::HomographyMat{T},
-                    idx::Vector{Int}) where T
-    u₁ = p.cs.first
-    @inbounds for j in 1:4
-        dj = jac_det(H, u₁[idx[j]])
-        (dj ≤ T(1e-4) || dj ≥ T(1e4)) && return false
-    end
-    return true
-end
+test_model(p::HomographyProblem{T}, H::HomographyMat{T}, idx::AbstractVector{Int}) where T =
+    @inbounds test_model(H, SVector(ntuple(i -> p.cs.first[idx[i]], Val(4))))
 
 # =============================================================================
 # fit — Weighted DLT for LO-RANSAC
@@ -115,7 +108,7 @@ Returns `(J=J, H=H_fwd)` where:
 - `J::SMatrix{9,16}`: ∂vec(H)/∂[s₁;s₂;s₃;s₄;d₁;d₂;d₃;d₄]
 - `H`: the forward homography (Frobenius-normalized, H[3,3] ≥ 0)
 """
-function solver_jacobian(p::HomographyProblem{T}, idx::Vector{Int},
+function solver_jacobian(p::HomographyProblem{T}, idx::AbstractVector{Int},
                                      H::HomographyMat{T}) where T
     u₁ = p.cs.first; u₂ = p.cs.second
 

@@ -75,7 +75,7 @@ data_size(p::LineFittingProblem) = length(p.points)
 model_type(::LineFittingProblem{T}) where T = Line2D{T}
 solver_cardinality(::LineFittingProblem) = SingleSolution()
 
-function solve(p::LineFittingProblem, idx::Vector{Int})
+function solve(p::LineFittingProblem, idx::AbstractVector{Int})
     @inbounds Line2D(p.points[idx[1]], p.points[idx[2]])
 end
 
@@ -92,7 +92,7 @@ function residuals!(r::Vector, p::LineFittingProblem{T}, line::Line2D{T}) where 
     return r
 end
 
-function test_sample(p::LineFittingProblem{T}, idx::Vector{Int}) where T
+function test_sample(p::LineFittingProblem{T}, idx::AbstractVector{Int}) where T
     @inbounds begin
         p1 = p.points[idx[1]]
         p2 = p.points[idx[2]]
@@ -183,7 +183,7 @@ data_size(p::InhomLineFittingProblem) = length(p.points)
 model_type(::InhomLineFittingProblem{T}) where T = SVector{2,T}
 solver_cardinality(::InhomLineFittingProblem) = SingleSolution()
 
-function solve(p::InhomLineFittingProblem{T}, idx::Vector{Int}) where T
+function solve(p::InhomLineFittingProblem{T}, idx::AbstractVector{Int}) where T
     @inbounds begin
         p1 = p.points[idx[1]]
         p2 = p.points[idx[2]]
@@ -205,7 +205,7 @@ function residuals!(r::Vector, p::InhomLineFittingProblem{T},
     return r
 end
 
-function test_sample(p::InhomLineFittingProblem{T}, idx::Vector{Int}) where T
+function test_sample(p::InhomLineFittingProblem{T}, idx::AbstractVector{Int}) where T
     @inbounds begin
         dx = p.points[idx[2]][1] - p.points[idx[1]][1]
         return abs(dx) > eps(T)
@@ -222,7 +222,7 @@ end
 #
 # This gives Σ_θ = s²·J_y·J_y' = s²·(X'X)⁻¹ (exact OLS covariance for 2 pts).
 
-function solver_jacobian(p::InhomLineFittingProblem{T}, idx::Vector{Int},
+function solver_jacobian(p::InhomLineFittingProblem{T}, idx::AbstractVector{Int},
                                      model::SVector{2,T}) where T
     @inbounds begin
         p1 = p.points[idx[1]]
@@ -290,7 +290,7 @@ data_size(p::EivLineFittingProblem) = length(p.points)
 model_type(::EivLineFittingProblem{T}) where T = SVector{2,T}
 solver_cardinality(::EivLineFittingProblem) = SingleSolution()
 
-function solve(p::EivLineFittingProblem{T}, idx::Vector{Int}) where T
+function solve(p::EivLineFittingProblem{T}, idx::AbstractVector{Int}) where T
     @inbounds begin
         p1 = p.points[idx[1]]
         p2 = p.points[idx[2]]
@@ -318,7 +318,7 @@ function residuals!(r::Vector, p::EivLineFittingProblem{T},
     return r
 end
 
-function test_sample(p::EivLineFittingProblem{T}, idx::Vector{Int}) where T
+function test_sample(p::EivLineFittingProblem{T}, idx::AbstractVector{Int}) where T
     @inbounds begin
         v = p.points[idx[2]] - p.points[idx[1]]
         return v[1]^2 + v[2]^2 > eps(T)
@@ -335,7 +335,7 @@ end
 #   ∂φ/∂z = (1/L)[-n; n]                         (4-vector)
 #   ∂d/∂z = [n(τ₁/L - 1); -n·τ₁/L]              (4-vector, τ₁ = t·p₁)
 
-function solver_jacobian(p::EivLineFittingProblem{T}, idx::Vector{Int},
+function solver_jacobian(p::EivLineFittingProblem{T}, idx::AbstractVector{Int},
                                      model::SVector{2,T}) where T
     @inbounds begin
         p1 = p.points[idx[1]]

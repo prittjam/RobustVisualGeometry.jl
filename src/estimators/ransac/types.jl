@@ -132,13 +132,18 @@ inlier_ratio(r::RansacEstimate) = sum(r.inlier_mask) / length(r.inlier_mask)
 # -----------------------------------------------------------------------------
 
 """
-    RansacWorkspace{M, T}
+    RansacWorkspace{K, M, T}
 
 Pre-allocated workspace for zero-allocation RANSAC main loop.
 
 Stores all scoring buffers, the best model found so far, and sampling indices.
 For `isbitstype` models (e.g., `SMatrix{3,3,Float64,9}`), `best_model` is
 stored inline in the mutable struct — no heap allocation on update.
+
+# Type Parameters
+- `K`: Minimal sample size (compile-time constant)
+- `M`: Model type
+- `T`: Element type
 
 # Constructor
 ```julia
@@ -149,7 +154,7 @@ ws = RansacWorkspace(n_data, sample_size, ModelType, Float64)
 # Reuse
 Pass a workspace to `ransac(; workspace=ws)` to avoid allocation across calls.
 """
-mutable struct RansacWorkspace{M, T<:AbstractFloat}
+mutable struct RansacWorkspace{K, M, T<:AbstractFloat}
     # Scoring buffers (length = data_size)
     residuals::Vector{T}
     scores::Vector{T}
@@ -160,15 +165,15 @@ mutable struct RansacWorkspace{M, T<:AbstractFloat}
     best_residuals::Vector{T}
     best_scores::Vector{T}
     best_mask::BitVector
-    # Sampling buffer (length = sample_size)
-    sample_indices::Vector{Int}
+    # Sampling buffer (length = sample_size, statically sized)
+    sample_indices::MVector{K,Int}
     # State
     has_best::Bool
 end
 
 function RansacWorkspace(n::Int, k::Int, ::Type{M}, ::Type{T}=Float64) where {M, T<:AbstractFloat}
     # Uninitialized model placeholder — has_best=false guards against reading
-    RansacWorkspace{M,T}(
+    RansacWorkspace{k,M,T}(
         Vector{T}(undef, n),
         Vector{T}(undef, n),
         zeros(T, n),
@@ -177,7 +182,7 @@ function RansacWorkspace(n::Int, k::Int, ::Type{M}, ::Type{T}=Float64) where {M,
         Vector{T}(undef, n),
         Vector{T}(undef, n),
         falses(n),
-        Vector{Int}(undef, k),
+        MVector{k,Int}(undef),
         false,
     )
 end

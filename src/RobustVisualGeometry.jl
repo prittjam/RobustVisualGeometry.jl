@@ -17,7 +17,7 @@ module RobustVisualGeometry
 
 using LinearAlgebra: LinearAlgebra, Diagonal, I, cond, norm, svd, dot,
                      eigen, Symmetric, diag, det
-using StaticArrays: StaticArrays, SVector, SMatrix, @SMatrix, SA
+using StaticArrays: StaticArrays, SVector, SMatrix, MVector, @SMatrix, SA
 using StructArrays: StructArrays
 using FixedSizeArrays: FixedSizeArrays, FixedSizeArray
 using Random: Random
@@ -68,14 +68,14 @@ import VisualGeometryCore: rho, psi, weight,           # GNC extends these
                            sampson_distance,             # used by conic + fundmat fitting
                            sampson_distances!,           # used by residuals!
                            scale,                        # interface extends this
-                           SVDWorkspace, svd_nullvec!    # used by RANSAC + solvers
+                           SVDWorkspace, svd_nullvec!,   # used by RANSAC + solvers
+                           test_model                    # RANSAC problems extend this
 
 # Import non-exported VGC symbols
 import VisualGeometryCore: RotMatrix,
                            _corrected_scale,
                            _homography_sample_nondegenerate,
                            _vec9_to_mat33,
-                           _oriented_epipolar_check,
                            projection_transform
 
 # =============================================================================

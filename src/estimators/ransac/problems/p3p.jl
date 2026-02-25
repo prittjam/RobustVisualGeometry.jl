@@ -122,7 +122,7 @@ data_size(p::P3PProblem) = length(p.cs)
 model_type(::P3PProblem) = Pose3
 solver_cardinality(::P3PProblem) = MultipleSolutions()
 
-function solve(p::P3PProblem, idx::Vector{Int})
+function solve(p::P3PProblem, idx::AbstractVector{Int})
     @inbounds rays_sample = SVector(p.rays[idx[1]], p.rays[idx[2]], p.rays[idx[3]])
     X = p.cs.first
     @inbounds X_sample = SVector(X[idx[1]], X[idx[2]], X[idx[3]])
@@ -166,6 +166,6 @@ function residuals!(r::Vector, p::P3PProblem, pose::Pose3)
     return r
 end
 
-function test_model(::P3PProblem, pose::Pose3, ::Vector{Int})
+function test_model(::P3PProblem, pose::Pose3, ::AbstractVector{Int})
     return all(isfinite, pose.t)
 end

@@ -155,7 +155,7 @@ The three covariance cases (Section 9) are handled by `score!`:
 - Heteroscedastic: qᵢ = rᵢᵀCᵢ⁻¹rᵢ, ℓᵢ = log|Cᵢ|
 - Predictive:      qᵢ = rᵢᵀVᵢ⁻¹rᵢ, ℓᵢ = log|Cᵢ| + log|V_wᵢ|
 """
-function _try_model!(ws::RansacWorkspace{M,T}, problem,
+function _try_model!(ws::RansacWorkspace{<:Any,M,T}, problem,
                      scoring::AbstractMarginalQuality, local_optimization,
                      model::M, best_g::T, best_l::T) where {M,T}
     n = data_size(problem)
@@ -241,7 +241,7 @@ end
 
 No-op: returns model unchanged.
 """
-function _locally_optimize!(ws::RansacWorkspace{M,T}, problem, model::M,
+function _locally_optimize!(ws::RansacWorkspace{<:Any,M,T}, problem, model::M,
                      ::NoLocalOptimization, scoring) where {M,T}
     return (; model, param_cov=nothing)
 end
@@ -252,7 +252,7 @@ end
 Strategy A (Algorithm 3): WLS to convergence at fixed mask, then re-sweep.
 Repeat until score does not improve.
 """
-function _locally_optimize!(ws::RansacWorkspace{M,T}, problem, model::M,
+function _locally_optimize!(ws::RansacWorkspace{<:Any,M,T}, problem, model::M,
                      lo::ConvergeThenRescore, scoring) where {M,T}
     n = data_size(problem)
     best_model = model
@@ -296,7 +296,7 @@ end
 Strategy B (Algorithm 4): Single WLS step, then re-sweep. Repeat until
 score does not improve.
 """
-function _locally_optimize!(ws::RansacWorkspace{M,T}, problem, model::M,
+function _locally_optimize!(ws::RansacWorkspace{<:Any,M,T}, problem, model::M,
                      lo::StepAndRescore, scoring) where {M,T}
     n = data_size(problem)
     best_model = model

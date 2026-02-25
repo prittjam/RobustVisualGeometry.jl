@@ -16,7 +16,7 @@ Subtypes implement `draw!` and `reset!` to provide different sampling behaviors
 field for compile-time dispatch.
 
 # Required Methods
-- `draw!(indices::Vector{Int}, sampler)` — fill indices with a random sample
+- `draw!(indices::AbstractVector{Int}, sampler)` — fill indices with a random sample
 - `reset!(sampler)` — reset mutable state for reuse across `ransac()` calls
 
 # Built-in Samplers
@@ -36,7 +36,7 @@ struct UniformSampler <: AbstractSampler
     n::Int
 end
 
-draw!(indices::Vector{Int}, s::UniformSampler) = (_draw_uniform!(indices, s.n); nothing)
+draw!(indices::AbstractVector{Int}, s::UniformSampler) = (_draw_uniform!(indices, s.n); nothing)
 reset!(::UniformSampler) = nothing
 
 """
@@ -44,7 +44,7 @@ reset!(::UniformSampler) = nothing
 
 Fill `indices[1:k]` with a uniform random sample without replacement from 1:n.
 """
-function _draw_uniform!(indices::Vector{Int}, n::Int, k::Int=length(indices))
+function _draw_uniform!(indices::AbstractVector{Int}, n::Int, k::Int=length(indices))
     @inbounds for i in 1:k
         while true
             j = rand(1:n)
@@ -81,7 +81,7 @@ Maintains a pool of correspondences sorted by quality score. Sampling starts
 from the top-m highest-scored matches and progressively expands the pool.
 
 # Fields
-- `sorted_indices::Vector{Int}` — data indices sorted by score (best first)
+- `sorted_indices::AbstractVector{Int}` — data indices sorted by score (best first)
 - `m::Int` — sample size (constant, e.g. 4 for homography)
 - `N::Int` — total data size (constant)
 - `T_N::Int` — total iteration budget (constant)
@@ -93,7 +93,7 @@ from the top-m highest-scored matches and progressively expands the pool.
 See also: `reset!`, `_draw_prosac!`
 """
 mutable struct ProsacSampler <: AbstractSampler
-    sorted_indices::Vector{Int}
+    sorted_indices::AbstractVector{Int}
     m::Int
     N::Int
     T_N::Int
@@ -125,7 +125,7 @@ Create a PROSAC sampler from pre-sorted indices.
 `m` is the minimal sample size.
 `T_N` is the maximum iteration budget (default: 200,000).
 """
-function ProsacSampler(sorted_indices::Vector{Int}, m::Int; T_N::Int=200_000)
+function ProsacSampler(sorted_indices::AbstractVector{Int}, m::Int; T_N::Int=200_000)
     N = length(sorted_indices)
     N >= m || throw(ArgumentError("Need at least $m data points for PROSAC, got $N"))
     ProsacSampler(sorted_indices, m, N, T_N, m, 0, _prosac_initial_Tn(m, N, T_N), 1)
@@ -154,7 +154,7 @@ Implements the Chum & Matas growth function:
 2. If in PROSAC phase: sample m-1 from U_{n-1}, force index n
 3. If in RANSAC phase: sample m from U_n (uniform)
 """
-function _draw_prosac!(indices::Vector{Int}, ps::ProsacSampler)
+function _draw_prosac!(indices::AbstractVector{Int}, ps::ProsacSampler)
     ps.t += 1
     m = ps.m
 
@@ -188,4 +188,4 @@ function _draw_prosac!(indices::Vector{Int}, ps::ProsacSampler)
     nothing
 end
 
-draw!(indices::Vector{Int}, s::ProsacSampler) = (_draw_prosac!(indices, s); nothing)
+draw!(indices::AbstractVector{Int}, s::ProsacSampler) = (_draw_prosac!(indices, s); nothing)

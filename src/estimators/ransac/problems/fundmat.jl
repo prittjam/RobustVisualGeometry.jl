@@ -60,7 +60,7 @@ codimension(::FundamentalMatrixProblem) = 1  # d_g = 1: one scalar epipolar cons
 model_type(::FundamentalMatrixProblem{T}) where T = FundamentalMat{T}
 solver_cardinality(::FundamentalMatrixProblem) = MultipleSolutions()
 
-function solve(p::FundamentalMatrixProblem{T}, idx::Vector{Int}) where T
+function solve(p::FundamentalMatrixProblem{T}, idx::AbstractVector{Int}) where T
     u₁ = p.cs.first; u₂ = p.cs.second
     result = @inbounds fundamental_matrix_7pt(
         u₁[idx[1]], u₁[idx[2]], u₁[idx[3]], u₁[idx[4]],
@@ -84,20 +84,11 @@ residuals!(r::Vector, p::FundamentalMatrixProblem{T}, F::FundamentalMat{T}) wher
 # No pre-solve degeneracy check: the 7pt solver detects true degeneracy via
 # SVD kernel dimension. Collinearity checks on C(7,3)=35 triplets per image
 # reject ~75% of valid all-inlier samples (matching SuperANSAC's approach).
-test_sample(::FundamentalMatrixProblem, ::Vector{Int}) = true
+test_sample(::FundamentalMatrixProblem, ::AbstractVector{Int}) = true
 
-# Oriented epipolar constraint on sample points: all sample correspondences
-# must have consistent sign of det([e₂]_× F u₁_hom), verifying that the
-# epipolar geometry is physically realizable (cheirality on the sample).
-function test_model(p::FundamentalMatrixProblem{T}, F::FundamentalMat{T},
-                    idx::Vector{Int}) where T
-    u₁ = p.cs.first; u₂ = p.cs.second
-    @inbounds u₁s = SVector(u₁[idx[1]], u₁[idx[2]], u₁[idx[3]], u₁[idx[4]],
-                             u₁[idx[5]], u₁[idx[6]], u₁[idx[7]])
-    @inbounds u₂s = SVector(u₂[idx[1]], u₂[idx[2]], u₂[idx[3]], u₂[idx[4]],
-                             u₂[idx[5]], u₂[idx[6]], u₂[idx[7]])
-    return _oriented_epipolar_check(u₁s, u₂s, F)
-end
+test_model(p::FundamentalMatrixProblem{T}, F::FundamentalMat{T}, idx::AbstractVector{Int}) where T =
+    @inbounds test_model(F, SVector(ntuple(i -> p.cs.first[idx[i]], Val(7))),
+                            SVector(ntuple(i -> p.cs.second[idx[i]], Val(7))))
 
 # =============================================================================
 # fit — Weighted DLT for LO-RANSAC

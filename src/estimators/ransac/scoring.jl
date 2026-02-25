@@ -547,7 +547,7 @@ end
 #   Σ̃_{gᵢ} = LLᵀ + ∂θgᵢ Σ̃_θ (∂θgᵢ)ᵀ
 #   log|Σ̃_{gᵢ}| = log|LLᵀ| + log|I + (L⁻¹∂θgᵢ) Σ̃_θ (L⁻¹∂θgᵢ)ᵀ|
 #                = ℓᵢ_meas + ℓᵢ_model
-function score!(ws::RansacWorkspace{M,T}, problem,
+function score!(ws::RansacWorkspace{<:Any,M,T}, problem,
                        scoring::PredictiveMarginalQuality,
                        model::M, ::Predictive) where {M,T}
     n = data_size(problem)
