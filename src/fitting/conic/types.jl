@@ -63,7 +63,7 @@ function _taubin_seed(xis::Vector{SVector{6,Float64}})
 end
 
 """
-    ConicTaubinProblem <: AbstractRobustProblem
+    ConicTaubinProblem <: AbstractTaubinProblem
 
 Robust Taubin problem: IRLS-weighted generalized eigenvalue problem
 using Taubin's gradient-weighted scatter matrices.
@@ -71,7 +71,7 @@ using Taubin's gradient-weighted scatter matrices.
 Taubin's eigenproblem `M*θ = λ*N*θ` always produces a structurally
 valid conic, making it robust as an initialization strategy.
 """
-struct ConicTaubinProblem <: AbstractRobustProblem
+struct ConicTaubinProblem <: AbstractTaubinProblem
     xis::Vector{SVector{6,Float64}}
     Lambdas::Vector{SMatrix{6,6,Float64,36}}
     Js::Vector{SMatrix{6,2,Float64,12}}
@@ -84,35 +84,20 @@ function ConicTaubinProblem(pts::AbstractVector{<:SVector{2}}, sigma::Real)
     ConicTaubinProblem(xis, Lambdas, Js)
 end
 
-initial_solve(prob::ConicTaubinProblem) = _taubin_seed(prob.xis)
-
-compute_residuals(prob::ConicTaubinProblem, θ) =
-    _compute_sampson_residuals(sampson_distance, θ, prob.xis, prob.Lambdas)
-
-function weighted_solve(prob::ConicTaubinProblem, θ, ω)
-    M = zeros(SMatrix{6,6,Float64,36})
-    N = zeros(SMatrix{6,6,Float64,36})
-    @inbounds for i in 1:length(prob.xis)
-        M += ω[i] * (prob.xis[i] * prob.xis[i]')
-        N += ω[i] * (prob.Js[i] * prob.Js[i]')
-    end
-    _solve_smallest_gep(M, N)
-end
-
-data_size(prob::ConicTaubinProblem) = length(prob.xis)
+# --- Dispatch points for AbstractTaubinProblem ---
+_seed(prob::ConicTaubinProblem) = _taubin_seed(prob.xis)
+_sampson_fn(::ConicTaubinProblem) = sampson_distance
 problem_dof(::ConicTaubinProblem) = _CONIC_DOF
-convergence_metric(::ConicTaubinProblem, θ_new, θ_old) =
-    _convergence_angle(θ_new, θ_old)
 
 """
-    ConicFNSProblem <: AbstractRobustProblem
+    ConicFNSProblem <: AbstractFNSProblem
 
 Robust FNS problem: IRLS-weighted FNS with bias correction.
 
 The FNS bias correction `v_i = 1/(θᵀΛ_iθ)` gives an asymptotically
 optimal estimate by accounting for carrier covariance.
 """
-struct ConicFNSProblem <: AbstractRobustProblem
+struct ConicFNSProblem <: AbstractFNSProblem
     xis::Vector{SVector{6,Float64}}
     Lambdas::Vector{SMatrix{6,6,Float64,36}}
 end
@@ -121,43 +106,7 @@ function ConicFNSProblem(pts::AbstractVector{<:SVector{2}}, sigma::Real)
     ConicFNSProblem(_build_carriers(pts), _build_covariances(pts, sigma^2))
 end
 
-function initial_solve(prob::ConicFNSProblem)
-    theta = _taubin_seed(prob.xis)
-
-    # A few FNS iterations for bias correction
-    for _ in 1:5
-        theta_old = theta
-        M = zeros(SMatrix{6,6,Float64,36})
-        N = zeros(SMatrix{6,6,Float64,36})
-        @inbounds for i in 1:length(prob.xis)
-            s2 = dot(theta, prob.Lambdas[i] * theta)
-            v = 1.0 / max(s2, eps())
-            M += v * (prob.xis[i] * prob.xis[i]')
-            N += v * prob.Lambdas[i]
-        end
-        theta = _solve_smallest_gep(M - N, M)
-        _convergence_angle(theta, theta_old) < 1e-10 && break
-    end
-    theta
-end
-
-compute_residuals(prob::ConicFNSProblem, θ) =
-    _compute_sampson_residuals(sampson_distance, θ, prob.xis, prob.Lambdas)
-
-function weighted_solve(prob::ConicFNSProblem, θ, ω)
-    M = zeros(SMatrix{6,6,Float64,36})
-    N = zeros(SMatrix{6,6,Float64,36})
-    @inbounds for i in 1:length(prob.xis)
-        s2 = dot(θ, prob.Lambdas[i] * θ)
-        v = 1.0 / max(s2, eps())
-        w = ω[i] * v
-        M += w * (prob.xis[i] * prob.xis[i]')
-        N += w * prob.Lambdas[i]
-    end
-    _solve_smallest_gep(M - N, M)
-end
-
-data_size(prob::ConicFNSProblem) = length(prob.xis)
+# --- Dispatch points for AbstractFNSProblem ---
+_seed(prob::ConicFNSProblem) = _taubin_seed(prob.xis)
+_sampson_fn(::ConicFNSProblem) = sampson_distance
 problem_dof(::ConicFNSProblem) = _CONIC_DOF
-convergence_metric(::ConicFNSProblem, θ_new, θ_old) =
-    _convergence_angle(θ_new, θ_old)

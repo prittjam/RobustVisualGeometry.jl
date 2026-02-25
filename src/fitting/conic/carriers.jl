@@ -62,14 +62,6 @@ Squared Sampson distance: (theta^T xi)^2 / (theta^T Lambda theta).
     e^2 / max(s2, eps(float(eltype(theta))))
 end
 
-"""
-    sampson_distance(theta, xi, Lambda) -> Real
-
-Signed Sampson distance: (theta^T xi) / sqrt(theta^T Lambda theta).
-"""
-@inline function sampson_distance(theta::AbstractVector, xi::AbstractVector,
-                                  Lambda::AbstractMatrix)
-    e = dot(theta, xi)
-    s2 = dot(theta, Lambda * theta)
-    e / sqrt(max(s2, eps(float(eltype(theta)))))
-end
+# sampson_distance(theta, xi, Lambda) is provided by VGC (imported via
+# `import VisualGeometryCore: sampson_distance`). Works for any AbstractVector/
+# AbstractMatrix, including SVector{6} (conic) and SVector{9} (fundmat).

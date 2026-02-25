@@ -5,17 +5,11 @@ using Random
 using ForwardDiff
 using VisualGeometryCore
 using RobustVisualGeometry
-using RobustVisualGeometry: residual_jacobian, _sq_norm, _sampson_distance_homography
+using RobustVisualGeometry: residual_jacobian, _sq_norm
 
 # =============================================================================
 # Test Utilities
 # =============================================================================
-
-"""Apply homography H to 2D point (homogeneous multiply + perspective divide)."""
-function apply_H(H::SMatrix{3,3,T,9}, p::SVector{2,T}) where T
-    h = H * SA[p[1], p[2], one(T)]
-    return SA[h[1]/h[3], h[2]/h[3]]
-end
 
 """Autodiff reference: homography_4pt as a function of the 16-element input vector."""
 function _h4pt_vec_ad(x::AbstractVector{T}) where T
@@ -56,23 +50,20 @@ end
     @testset "homography_4pt_with_jacobian — autodiff verification" begin
         rng = MersenneTwister(42)
 
-        H_true = @SMatrix [
-             0.95  -0.10  15.0;
-             0.12   0.93  -8.0;
-             1e-4   2e-4   1.0
-        ]
-        H_true = H_true / norm(H_true)
-        if H_true[3,3] < 0; H_true = -H_true; end
+        H_raw = SMatrix{3,3,Float64,9}(0.95,0.12,1e-4, -0.10,0.93,2e-4, 15.0,-8.0,1.0)
+        H_raw = H_raw / norm(H_raw)
+        if H_raw[3,3] < 0; H_raw = -H_raw; end
+        H_true = HomographyMat{Float64}(Tuple(H_raw))
 
         src = [SA[100.0 + 700.0*rand(rng), 100.0 + 500.0*rand(rng)] for _ in 1:4]
-        dst = [apply_H(H_true, s) for s in src]
+        dst = map(PerspectiveMap() ∘ ProjectiveMap(H_true), src)
 
         result = homography_4pt_with_jacobian(
             src[1], src[2], src[3], src[4],
             dst[1], dst[2], dst[3], dst[4])
         @test !isnothing(result)
         H, J = result
-        @test H isa SMatrix{3,3,Float64,9}
+        @test H isa HomographyMat{Float64}
         @test J isa SMatrix{9,16,Float64}
 
         # Verify H matches homography_4pt
@@ -89,16 +80,13 @@ end
 
     @testset "homography_4pt_with_jacobian — second configuration" begin
         # Different H with strong perspective
-        H_true = @SMatrix [
-            2.0   0.5   100.0;
-           -0.3   1.5   -50.0;
-            0.002 0.001   1.0
-        ]
-        H_true = H_true / norm(H_true)
-        if H_true[3,3] < 0; H_true = -H_true; end
+        H_raw = SMatrix{3,3,Float64,9}(2.0,-0.3,0.002, 0.5,1.5,0.001, 100.0,-50.0,1.0)
+        H_raw = H_raw / norm(H_raw)
+        if H_raw[3,3] < 0; H_raw = -H_raw; end
+        H_true = HomographyMat{Float64}(Tuple(H_raw))
 
         src = [SA[100.0, 200.0], SA[500.0, 100.0], SA[800.0, 600.0], SA[200.0, 700.0]]
-        dst = [apply_H(H_true, s) for s in src]
+        dst = map(PerspectiveMap() ∘ ProjectiveMap(H_true), src)
 
         result = homography_4pt_with_jacobian(
             src[1], src[2], src[3], src[4],
@@ -123,16 +111,13 @@ end
     @testset "_transfer_error_jacobian_wrt_h — autodiff verification" begin
         rng = MersenneTwister(123)
 
-        H = @SMatrix [
-             0.95  -0.10  15.0;
-             0.12   0.93  -8.0;
-             1e-4   2e-4   1.0
-        ]
-        H = H / norm(H)
-        if H[3,3] < 0; H = -H; end
+        H_raw = SMatrix{3,3,Float64,9}(0.95,0.12,1e-4, -0.10,0.93,2e-4, 15.0,-8.0,1.0)
+        H_raw = H_raw / norm(H_raw)
+        if H_raw[3,3] < 0; H_raw = -H_raw; end
+        H = HomographyMat{Float64}(Tuple(H_raw))
 
         s = SA[300.0 + 400.0*rand(rng), 200.0 + 300.0*rand(rng)]
-        d = apply_H(H, s) + SA[0.5*randn(rng), 0.5*randn(rng)]
+        d = (PerspectiveMap() ∘ ProjectiveMap(H))(s) + SA[0.5*randn(rng), 0.5*randn(rng)]
 
         G = VisualGeometryCore._transfer_error_jacobian_wrt_h(s, d, H)
         @test G isa SMatrix{2,9,Float64}
@@ -144,15 +129,11 @@ end
     end
 
     @testset "_transfer_error_jacobian_wrt_h — pure translation" begin
-        H = @SMatrix [
-             1.0  0.0  10.0;
-             0.0  1.0  -5.0;
-             0.0  0.0   1.0
-        ]
-        H = H / norm(H)
+        H_raw = SMatrix{3,3,Float64,9}(1.0,0.0,0.0, 0.0,1.0,0.0, 10.0,-5.0,1.0)
+        H = HomographyMat{Float64}(Tuple(H_raw / norm(H_raw)))
 
         s = SA[100.0, 200.0]
-        d = apply_H(H, s)
+        d = (PerspectiveMap() ∘ ProjectiveMap(H))(s)
         G = VisualGeometryCore._transfer_error_jacobian_wrt_h(s, d, H)
 
         @test all(isfinite, G)
@@ -191,18 +172,16 @@ end
         end
 
         rng = MersenneTwister(77)
-        H_true = @SMatrix [
-             0.95  -0.10  15.0;
-             0.12   0.93  -8.0;
-             1e-4   2e-4   1.0
-        ]
-        H_true = H_true / norm(H_true)
-        if H_true[3,3] < 0; H_true = -H_true; end
+        H_raw = SMatrix{3,3,Float64,9}(0.95,0.12,1e-4, -0.10,0.93,2e-4, 15.0,-8.0,1.0)
+        H_raw = H_raw / norm(H_raw)
+        if H_raw[3,3] < 0; H_raw = -H_raw; end
+        H_true = HomographyMat{Float64}(Tuple(H_raw))
 
         # Generate 10 correspondences (HomographyProblem requires ≥ 4)
         n_pts = 10
+        warp = PerspectiveMap() ∘ ProjectiveMap(H_true)
         src_pts = [SA[100.0 + 700.0*rand(rng), 100.0 + 500.0*rand(rng)] for _ in 1:n_pts]
-        dst_pts = [apply_H(H_true, s) + SA[2.0*randn(rng), 2.0*randn(rng)] for s in src_pts]
+        dst_pts = [warp(s) + SA[2.0*randn(rng), 2.0*randn(rng)] for s in src_pts]
         cs = [src_pts[i] => dst_pts[i] for i in 1:n_pts]
         prob = HomographyProblem(cs)
 
@@ -238,7 +217,7 @@ end
             @test maximum(abs.(rᵢ - r_expected)) < 1e-8
 
             # Verify qᵢ = rᵢᵀrᵢ = Sampson distance²
-            sampson_d = _sampson_distance_homography(s, d, H_true)
+            sampson_d = sampson_distance(H_true, s, d)
             @test abs(_sq_norm(rᵢ) - sampson_d^2) < 1e-8
 
             # Verify ℓᵢ = log|Σ̃_{gᵢ}|

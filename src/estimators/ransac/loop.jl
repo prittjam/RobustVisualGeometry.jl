@@ -174,12 +174,7 @@ function _try_model!(ws::RansacWorkspace{M,T}, problem,
     lo = _lo_refine!(ws, problem, model, local_optimization, scoring)
 
     # Phase 3: Re-score refined model (always model-certain)
-    @inbounds for i in 1:n
-        ws.scores[i] = ws.residuals[i]^2
-    end
-    _model_certain_penalties!(ws.penalties, problem, lo.model)
-    score_l, k_l = sweep!(scoring, ws.scores, ws.penalties, n)
-    mask!(ws, scoring.perm, k_l)
+    score_l, _ = _rescore_model_certain!(ws, problem, scoring, lo.model)
     score_l <= best_l && return (best_g, best_l)
 
     _update_best!(ws, lo.model)
@@ -206,6 +201,27 @@ _model_certain_penalties!(out, problem, model, ::Heteroscedastic) =
     measurement_logdets!(out, problem, model)
 
 # =============================================================================
+# _rescore_model_certain! — Re-score with model-certain (Σ_θ = 0) penalties
+# =============================================================================
+
+"""
+    _rescore_model_certain!(ws, problem, scoring, model) -> (score, k)
+
+Re-score a model using squared residuals and model-certain penalties.
+Used by both `_try_model!` (Phase 3) and `_finalize` after local optimization.
+"""
+function _rescore_model_certain!(ws, problem, scoring, model)
+    n = length(ws.residuals)
+    @inbounds for i in 1:n
+        ws.scores[i] = ws.residuals[i]^2
+    end
+    _model_certain_penalties!(ws.penalties, problem, model)
+    score, k = sweep!(scoring, ws.scores, ws.penalties, n)
+    mask!(ws, scoring.perm, k)
+    (score, k)
+end
+
+# =============================================================================
 # _lo_refine! — Local Refinement Dispatch (refine only, no scoring)
 # =============================================================================
 
@@ -217,6 +233,35 @@ No-op: returns model unchanged.
 function _lo_refine!(ws::RansacWorkspace{M,T}, problem, model::M,
                      ::NoLocalOptimization, scoring) where {M,T}
     return (; model, param_cov=nothing)
+end
+
+# =============================================================================
+# _inlier_scale_and_weights — Compute scale, DOF, and binary weights from mask
+# =============================================================================
+
+"""
+    _inlier_scale_and_weights(residuals, mask, model_dof) -> (scale, dof, weights)
+
+Compute inlier scale (sqrt(RSS/ν)), degrees of freedom, and binary weight
+vector from residuals and inlier mask.
+"""
+function _inlier_scale_and_weights(residuals::AbstractVector{T},
+                                    mask::BitVector, model_dof::Int) where T
+    n = length(residuals)
+    n_in = sum(mask)
+    nu = n_in - model_dof
+    RSS = zero(T)
+    @inbounds for i in 1:n
+        mask[i] && (RSS += residuals[i]^2)
+    end
+    s2 = nu > 0 ? RSS / nu : T(NaN)
+    s = s2 > zero(T) ? sqrt(s2) : T(NaN)
+
+    w = Vector{T}(undef, n)
+    @inbounds for i in 1:n
+        w[i] = mask[i] ? one(T) : zero(T)
+    end
+    (s, nu, w)
 end
 
 # =============================================================================
@@ -254,34 +299,13 @@ function _finalize(scoring::AbstractMarginalQuality,
     lo = _lo_refine!(ws, problem, model, local_optimization, scoring)
 
     # Re-score to check if local optimization improved
-    @inbounds for i in 1:n
-        ws.scores[i] = ws.residuals[i]^2
-    end
-    _model_certain_penalties!(ws.penalties, problem, lo.model)
-    score_final, k_final = sweep!(scoring, ws.scores, ws.penalties, n)
-    mask!(ws, scoring.perm, k_final)
+    score_final, _ = _rescore_model_certain!(ws, problem, scoring, lo.model)
 
     if score_final >= best_score
         model = lo.model
     end
 
-    # Compute scale and dof from final mask
-    n_in = sum(ws.mask)
-    nu = n_in - p
-    RSS = zero(T)
-    @inbounds for i in 1:n
-        if ws.mask[i]
-            RSS += ws.residuals[i]^2
-        end
-    end
-    s2 = nu > 0 ? RSS / nu : T(NaN)
-    s = s2 > zero(T) ? sqrt(s2) : T(NaN)
-
-    # Binary weights from final mask
-    w = Vector{T}(undef, n)
-    @inbounds for i in 1:n
-        w[i] = ws.mask[i] ? one(T) : zero(T)
-    end
+    s, nu, w = _inlier_scale_and_weights(ws.residuals, ws.mask, p)
 
     base_attrs = RansacAttributes(:converged;
         inlier_mask = copy(ws.mask),

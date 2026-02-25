@@ -8,7 +8,8 @@ using VisualGeometryCore: ScoringTrait, HasScore, NoScore, scoring
 using RobustVisualGeometry
 using RobustVisualGeometry: sample_size, data_size, model_type,
     solver_cardinality, MultipleSolutions,
-    RansacRefineProblem, MEstimator, FixedScale, robust_solve
+    RansacRefineProblem, MEstimator, FixedScale, robust_solve,
+    weighted_solve
 using VisualGeometryCore.Matching: Attributed, ScoredCspond, csponds
 
 # =============================================================================
@@ -31,7 +32,7 @@ function cameras_to_fundmat(K₁, R₁, t₁, K₂, R₂, t₂)
     F = inv(K₂)' * E * inv(K₁)
     F = F / norm(F)
     if F[3,3] < 0; F = -F; end
-    return SMatrix{3,3,Float64,9}(F)
+    return FundamentalMat{Float64}(Tuple(F))
 end
 
 """Project 3D point to 2D using camera (K, R, t)."""
@@ -130,7 +131,7 @@ end
         p = FundamentalMatrixProblem(csponds(src, dst))
         @test sample_size(p) == 7
         @test data_size(p) == 10
-        @test model_type(p) == SMatrix{3,3,Float64,9}
+        @test model_type(p) == FundamentalMat{Float64}
         @test solver_cardinality(p) isa MultipleSolutions
 
         # Too few correspondences
@@ -305,21 +306,14 @@ end
         @test sv[3] / sv[1] < 0.01
     end
 
-    @testset "IRLS — weighted_system + model_from_solution roundtrip" begin
+    @testset "IRLS — weighted DLT roundtrip" begin
         src, dst, F_true = make_exact_fundmat_data(n=20)
         p = FundamentalMatrixProblem(csponds(src, dst))
         mask = trues(20)
-        w = ones(20)
 
-        sys = weighted_system(p, F_true, mask, w)
-        @test !isnothing(sys)
-        @test :A in propertynames(sys)
-        @test :T₁ in propertynames(sys)
-        @test :T₂ in propertynames(sys)
-
-        # Solve via SVD and reconstruct
-        f = svd(sys.A).Vt[end, :]
-        F_rec = model_from_solution(p, f, sys)
+        # weighted_solve through RansacRefineProblem calls DLT directly
+        adapter = RansacRefineProblem(p, mask, p._svd_ws)
+        F_rec = weighted_solve(adapter, F_true, ones(20))
         @test !isnothing(F_rec)
 
         # Should satisfy epipolar constraint
@@ -370,7 +364,7 @@ end
                         config=RansacConfig(max_trials=5000))
 
         @test result isa RansacEstimate
-        @test result.value isa SMatrix{3,3,Float64,9}
+        @test result.value isa FundamentalMat{Float64}
         @test result.inlier_mask isa BitVector
         @test result.residuals isa Vector{Float64}
         @test result.weights isa Vector{Float64}

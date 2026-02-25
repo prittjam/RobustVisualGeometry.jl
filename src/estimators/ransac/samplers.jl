@@ -104,6 +104,19 @@ mutable struct ProsacSampler <: AbstractSampler
 end
 
 """
+    _prosac_initial_Tn(m, N, T_N) -> Float64
+
+Compute the initial T_n value for PROSAC: T_N * C(m,m)/C(N,m).
+"""
+function _prosac_initial_Tn(m::Int, N::Int, T_N::Int)
+    T_n = one(Float64)
+    for i in 0:(m-1)
+        T_n *= (m - i) / (N - i)
+    end
+    T_n * T_N
+end
+
+"""
     ProsacSampler(sorted_indices, m; T_N=200_000)
 
 Create a PROSAC sampler from pre-sorted indices.
@@ -115,13 +128,7 @@ Create a PROSAC sampler from pre-sorted indices.
 function ProsacSampler(sorted_indices::Vector{Int}, m::Int; T_N::Int=200_000)
     N = length(sorted_indices)
     N >= m || throw(ArgumentError("Need at least $m data points for PROSAC, got $N"))
-    # Initial T_n for n=m: T_N * C(m,m)/C(N,m) = T_N / C(N,m)
-    T_n = one(Float64)
-    for i in 0:(m-1)
-        T_n *= (m - i) / (N - i)
-    end
-    T_n *= T_N
-    ProsacSampler(sorted_indices, m, N, T_N, m, 0, T_n, 1)
+    ProsacSampler(sorted_indices, m, N, T_N, m, 0, _prosac_initial_Tn(m, N, T_N), 1)
 end
 
 """
@@ -130,15 +137,9 @@ end
 Reset PROSAC sampler state for reuse (e.g., across multiple `ransac()` calls).
 """
 function reset!(ps::ProsacSampler)
-    m, N, T_N = ps.m, ps.N, ps.T_N
-    T_n = one(Float64)
-    for i in 0:(m-1)
-        T_n *= (m - i) / (N - i)
-    end
-    T_n *= T_N
-    ps.n = m
+    ps.n = ps.m
     ps.t = 0
-    ps.T_n = T_n
+    ps.T_n = _prosac_initial_Tn(ps.m, ps.N, ps.T_N)
     ps.T_n_prime = 1
     nothing
 end

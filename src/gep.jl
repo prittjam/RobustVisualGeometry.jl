@@ -88,3 +88,114 @@ function _compute_sampson_residuals(sampson_fn, theta, xis, Lambdas)
     end
     r
 end
+
+# =============================================================================
+# GEP Problem Type Hierarchy (Taubin / FNS)
+# =============================================================================
+#
+# Abstract types for Taubin and FNS problems. Concrete subtypes must have
+# fields `xis` and `Lambdas`; Taubin subtypes also need `Js`.
+#
+# Dispatch points (each concrete subtype implements):
+#   _project(prob, θ)   — post-solve projection (default: identity)
+#   _seed(prob)         — initial Taubin seed (domain-specific)
+#   _sampson_fn(prob)   — signed Sampson distance function
+#   problem_dof(prob)   — degrees of freedom
+# =============================================================================
+
+abstract type AbstractTaubinProblem <: AbstractRobustProblem end
+abstract type AbstractFNSProblem <: AbstractRobustProblem end
+
+const AbstractGEPProblem = Union{AbstractTaubinProblem, AbstractFNSProblem}
+
+# --- Dispatch points (stubs) ---
+function _project end
+function _seed end
+function _sampson_fn end
+
+# --- Default: identity projection ---
+_project(::AbstractGEPProblem, θ) = θ
+
+# --- Shared interface on AbstractGEPProblem ---
+data_size(prob::AbstractGEPProblem) = length(prob.xis)
+convergence_metric(::AbstractGEPProblem, θ_new, θ_old) = _convergence_angle(θ_new, θ_old)
+compute_residuals(prob::AbstractGEPProblem, θ) =
+    _compute_sampson_residuals(_sampson_fn(prob), θ, prob.xis, prob.Lambdas)
+
+# --- Taubin: weighted_solve and initial_solve ---
+weighted_solve(prob::AbstractTaubinProblem, θ, ω) =
+    _project(prob, _taubin_weighted_gep(prob.xis, prob.Js, ω))
+
+initial_solve(prob::AbstractTaubinProblem) = _seed(prob)
+
+# --- FNS: weighted_solve and initial_solve ---
+weighted_solve(prob::AbstractFNSProblem, θ, ω) =
+    _project(prob, _fns_weighted_gep(prob.xis, prob.Lambdas, θ, ω))
+
+initial_solve(prob::AbstractFNSProblem) =
+    _fns_initial_iterate(prob.xis, prob.Lambdas, _seed(prob);
+                         project=θ -> _project(prob, θ))
+
+# =============================================================================
+# Generic Weighted GEP Solves (dimension-generic via SVector{N,T})
+# =============================================================================
+
+"""
+    _taubin_weighted_gep(xis, Js, ω) -> SVector{N}
+
+Weighted Taubin GEP: M = Σ ωᵢ(ξᵢξᵢᵀ), N = Σ ωᵢ(JᵢJᵢᵀ), solve GEP(M, N).
+"""
+function _taubin_weighted_gep(xis::Vector{SVector{N,T}}, Js, ω) where {N,T}
+    M = zero(SMatrix{N,N,T,N*N})
+    N_mat = zero(SMatrix{N,N,T,N*N})
+    @inbounds for i in 1:length(xis)
+        M += ω[i] * (xis[i] * xis[i]')
+        N_mat += ω[i] * (Js[i] * Js[i]')
+    end
+    _solve_smallest_gep(M, N_mat)
+end
+
+"""
+    _fns_weighted_gep(xis, Lambdas, θ, ω) -> SVector{N}
+
+Weighted FNS GEP with bias correction vᵢ = 1/(θᵀΛᵢθ):
+M = Σ wᵢvᵢ(ξᵢξᵢᵀ), N = Σ wᵢvᵢΛᵢ, solve GEP(M-N, M).
+"""
+function _fns_weighted_gep(xis::Vector{SVector{N,T}}, Lambdas, θ, ω) where {N,T}
+    M = zero(SMatrix{N,N,T,N*N})
+    N_mat = zero(SMatrix{N,N,T,N*N})
+    @inbounds for i in 1:length(xis)
+        s2 = dot(θ, Lambdas[i] * θ)
+        v = one(T) / max(s2, eps(T))
+        w = ω[i] * v
+        M += w * (xis[i] * xis[i]')
+        N_mat += w * Lambdas[i]
+    end
+    _solve_smallest_gep(M - N_mat, M)
+end
+
+"""
+    _fns_initial_iterate(xis, Lambdas, seed; project=identity, n_iter=5, tol=1e-10)
+
+FNS warmup: starting from `seed`, run `n_iter` unweighted FNS iterations with
+optional post-projection (e.g., rank-2 enforcement for fundamental matrices).
+"""
+function _fns_initial_iterate(xis::Vector{SVector{N,T}}, Lambdas, seed::SVector{N,T};
+                               project=identity, n_iter::Int=5,
+                               tol::Float64=1e-10) where {N,T}
+    θ = seed
+    for _ in 1:n_iter
+        θ_old = θ
+        M = zero(SMatrix{N,N,T,N*N})
+        N_mat = zero(SMatrix{N,N,T,N*N})
+        @inbounds for i in 1:length(xis)
+            s2 = dot(θ, Lambdas[i] * θ)
+            v = one(T) / max(s2, eps(T))
+            M += v * (xis[i] * xis[i]')
+            N_mat += v * Lambdas[i]
+        end
+        θ = project(_solve_smallest_gep(M - N_mat, M))
+        _convergence_angle(θ, θ_old) < tol && break
+    end
+    θ
+end

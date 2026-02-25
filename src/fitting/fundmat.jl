@@ -149,22 +149,9 @@ function _fmat_project_rank2(f::SVector{9,Float64})
     )
 end
 
-# =============================================================================
-# Residuals
-# =============================================================================
-
-"""
-    _fmat_signed_sampson(f, xi, Lambda) -> Float64
-
-Signed Sampson distance: fᵀξ / √(fᵀΛf).
-"""
-@inline function _fmat_signed_sampson(f::SVector{9,Float64},
-                                       xi::SVector{9,Float64},
-                                       Lambda::SMatrix{9,9,Float64,81})
-    e = dot(f, xi)
-    s2 = dot(f, Lambda * f)
-    e / sqrt(max(s2, eps()))
-end
+# Signed Sampson distance for the fundmat GEP uses the generic
+# sampson_distance(theta, xi, Lambda) from VGC — same formula applies
+# to any linear constraint: dot(θ, ξ) / √(θᵀΛθ).
 
 # =============================================================================
 # Taubin Seed
@@ -188,100 +175,50 @@ function _fmat_taubin_seed(xis::Vector{SVector{9,Float64}},
 end
 
 # =============================================================================
-# FMatTaubinProblem <: AbstractRobustProblem
+# FMatTaubinProblem <: AbstractTaubinProblem
 # =============================================================================
 
 """
-    FMatTaubinProblem <: AbstractRobustProblem
+    FMatTaubinProblem <: AbstractTaubinProblem
 
 Robust Taubin problem for fundamental matrix estimation.
 IRLS-weighted GEP using Taubin's gradient-weighted scatter matrices
 with rank-2 projection after each solve.
 """
-struct FMatTaubinProblem <: AbstractRobustProblem
+struct FMatTaubinProblem <: AbstractTaubinProblem
     xis::Vector{SVector{9,Float64}}
     Lambdas::Vector{SMatrix{9,9,Float64,81}}
     Js::Vector{SMatrix{9,4,Float64,36}}
 end
 
-initial_solve(prob::FMatTaubinProblem) =
-    _fmat_taubin_seed(prob.xis, prob.Lambdas, prob.Js)
-
-compute_residuals(prob::FMatTaubinProblem, f) =
-    _compute_sampson_residuals(_fmat_signed_sampson, f, prob.xis, prob.Lambdas)
-
-function weighted_solve(prob::FMatTaubinProblem, f, ω)
-    M = zeros(SMatrix{9,9,Float64,81})
-    N = zeros(SMatrix{9,9,Float64,81})
-    @inbounds for i in 1:length(prob.xis)
-        M += ω[i] * (prob.xis[i] * prob.xis[i]')
-        N += ω[i] * (prob.Js[i] * prob.Js[i]')
-    end
-    _fmat_project_rank2(_solve_smallest_gep(M, N))
-end
-
-data_size(prob::FMatTaubinProblem) = length(prob.xis)
+# --- Dispatch points for AbstractTaubinProblem ---
+_project(::FMatTaubinProblem, θ) = _fmat_project_rank2(θ)
+_seed(prob::FMatTaubinProblem) = _fmat_taubin_seed(prob.xis, prob.Lambdas, prob.Js)
+_sampson_fn(::FMatTaubinProblem) = sampson_distance
 problem_dof(::FMatTaubinProblem) = _FMAT_DOF
-convergence_metric(::FMatTaubinProblem, f_new, f_old) =
-    _convergence_angle(f_new, f_old)
 
 # =============================================================================
-# FMatFNSProblem <: AbstractRobustProblem
+# FMatFNSProblem <: AbstractFNSProblem
 # =============================================================================
 
 """
-    FMatFNSProblem <: AbstractRobustProblem
+    FMatFNSProblem <: AbstractFNSProblem
 
 Robust FNS problem for fundamental matrix estimation.
 Combines FNS bias correction (vᵢ = 1/(fᵀΛᵢf)) with IRLS weighting
 and rank-2 projection.
 """
-struct FMatFNSProblem <: AbstractRobustProblem
+struct FMatFNSProblem <: AbstractFNSProblem
     xis::Vector{SVector{9,Float64}}
     Lambdas::Vector{SMatrix{9,9,Float64,81}}
     Js::Vector{SMatrix{9,4,Float64,36}}
 end
 
-function initial_solve(prob::FMatFNSProblem)
-    f = _fmat_taubin_seed(prob.xis, prob.Lambdas, prob.Js)
-
-    # A few FNS iterations for bias correction
-    for _ in 1:5
-        f_old = f
-        M = zeros(SMatrix{9,9,Float64,81})
-        N = zeros(SMatrix{9,9,Float64,81})
-        @inbounds for i in 1:length(prob.xis)
-            s2 = dot(f, prob.Lambdas[i] * f)
-            v = 1.0 / max(s2, eps())
-            M += v * (prob.xis[i] * prob.xis[i]')
-            N += v * prob.Lambdas[i]
-        end
-        f = _fmat_project_rank2(_solve_smallest_gep(M - N, M))
-        _convergence_angle(f, f_old) < 1e-10 && break
-    end
-    f
-end
-
-compute_residuals(prob::FMatFNSProblem, f) =
-    _compute_sampson_residuals(_fmat_signed_sampson, f, prob.xis, prob.Lambdas)
-
-function weighted_solve(prob::FMatFNSProblem, f, ω)
-    M = zeros(SMatrix{9,9,Float64,81})
-    N = zeros(SMatrix{9,9,Float64,81})
-    @inbounds for i in 1:length(prob.xis)
-        s2 = dot(f, prob.Lambdas[i] * f)
-        v = 1.0 / max(s2, eps())
-        w = ω[i] * v
-        M += w * (prob.xis[i] * prob.xis[i]')
-        N += w * prob.Lambdas[i]
-    end
-    _fmat_project_rank2(_solve_smallest_gep(M - N, M))
-end
-
-data_size(prob::FMatFNSProblem) = length(prob.xis)
+# --- Dispatch points for AbstractFNSProblem ---
+_project(::FMatFNSProblem, θ) = _fmat_project_rank2(θ)
+_seed(prob::FMatFNSProblem) = _fmat_taubin_seed(prob.xis, prob.Lambdas, prob.Js)
+_sampson_fn(::FMatFNSProblem) = sampson_distance
 problem_dof(::FMatFNSProblem) = _FMAT_DOF
-convergence_metric(::FMatFNSProblem, f_new, f_old) =
-    _convergence_angle(f_new, f_old)
 
 # =============================================================================
 # Result Type
@@ -290,9 +227,9 @@ convergence_metric(::FMatFNSProblem, f_new, f_old) =
 """
     FMatFitResult{T}
 
-Type alias for `Attributed{SMatrix{3,3,T,9}, RobustAttributes{T}}`.
+Type alias for `Attributed{FundamentalMat{T}, RobustAttributes{T}}`.
 """
-const FMatFitResult{T} = Attributed{SMatrix{3,3,T,9}, RobustAttributes{T}}
+const FMatFitResult{T} = Attributed{FundamentalMat{T}, RobustAttributes{T}}
 
 function Base.show(io::IO, r::FMatFitResult{T}) where {T}
     n_inliers = count(>(0.5), r.weights)
@@ -323,31 +260,21 @@ function _fmat_prepare(u1::AbstractVector{SVector{2,Float64}},
 end
 
 """
-    _fmat_denormalize(f, T1, T2) -> SMatrix{3,3,Float64,9}
-
-Denormalize: reshape 9-vec → 3×3, apply T₂ᵀ F T₁, enforce rank-2, sign-normalize.
-"""
-function _fmat_denormalize(f::SVector{9,Float64},
-                            T1::SMatrix{3,3,Float64,9},
-                            T2::SMatrix{3,3,Float64,9})
-    F_norm = _vec9_to_mat33(f, Float64)
-    F = T2' * F_norm * T1
-    F2 = enforce_rank_two(F)
-    Fn = sign_normalize(F2)
-    Fn === nothing ? F2 / norm(F2) : Fn
-end
-
-"""
     _finalize_fmat_result(result, T1, T2, u1, u2, sigma) -> FMatFitResult
 
-Denormalize F, recompute Sampson residuals in original coordinates.
+Unnormalize F, recompute Sampson residuals in original coordinates.
 """
 function _finalize_fmat_result(result, T1, T2, u1, u2, sigma)
-    F = _fmat_denormalize(result.value, T1, T2)
+    F_norm = FundamentalMat{Float64}(Tuple(_vec9_to_mat33(result.value, Float64)))
+    F_rank2 = enforce_rank_two(F_norm)
+    F = hartley_unnormalize(F_rank2, T1, T2)
+    if F === nothing
+        F = FundamentalMat{Float64}(Tuple(SMatrix{3,3,Float64,9}(F_rank2) / norm(F_rank2)))
+    end
     n = length(u1)
     residuals = Vector{Float64}(undef, n)
     @inbounds for i in 1:n
-        residuals[i] = sampson_distance(u1[i], u2[i], F)
+        residuals[i] = sampson_distance(F, u1[i], u2[i])
     end
     Attributed(F, RobustAttributes(result.stop_reason, residuals,
                                    copy(result.weights), result.scale,

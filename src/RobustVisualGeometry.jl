@@ -16,8 +16,7 @@
 module RobustVisualGeometry
 
 using LinearAlgebra: LinearAlgebra, Diagonal, I, cond, norm, svd, dot,
-                     eigen, Symmetric, diag, det, tr, pinv, cross
-using Statistics: median
+                     eigen, Symmetric, diag, det
 using StaticArrays: StaticArrays, SVector, SMatrix, @SMatrix, SA
 using StructArrays: StructArrays
 using FixedSizeArrays: FixedSizeArrays, FixedSizeArray
@@ -31,10 +30,11 @@ using Random: Random
 using VisualGeometryCore: Point2, Line2D, Ellipse, Uncertain,
                           Attributed, AbstractAttributes,
                           HomEllipseMat, CameraModel,
-                          EuclideanMap, ScoredCspond
+                          EuclideanMap,
+                          HomographyMat, FundamentalMat
 
 # Scoring trait
-using VisualGeometryCore: ScoringTrait, HasScore, NoScore, scoring
+using VisualGeometryCore: HasScore, scoring
 
 # Loss functions (re-exported by RVG)
 using VisualGeometryCore: AbstractLoss, GNCLoss,
@@ -48,8 +48,11 @@ using VisualGeometryCore: AbstractScaleEstimator,
 
 # Geometry operations
 using VisualGeometryCore: normal, param_cov, sign_normalize,
-                          enforce_rank_two, hartley_normalization,
-                          backproject
+                          enforce_rank_two,
+                          hartley_normalization, hartley_unnormalize,
+                          backproject,
+                          jac_det,
+                          sampson_whitened, sampson_logdets!
 
 # Solvers
 using VisualGeometryCore: homography_4pt, homography_4pt_with_jacobian,
@@ -62,7 +65,8 @@ using VisualGeometryCore: homography_4pt, homography_4pt_with_jacobian,
 # shadowing VGC's version and breaking dispatch for VGC's method signatures.
 import VisualGeometryCore: rho, psi, weight,           # GNC extends these
                            tuning_constant,             # GNC extends this
-                           sampson_distance,             # conic_fitting extends this
+                           sampson_distance,             # used by conic + fundmat fitting
+                           sampson_distances!,           # used by residuals!
                            scale,                        # interface extends this
                            SVDWorkspace, svd_nullvec!    # used by RANSAC + solvers
 
@@ -70,8 +74,6 @@ import VisualGeometryCore: rho, psi, weight,           # GNC extends these
 import VisualGeometryCore: RotMatrix,
                            _corrected_scale,
                            _homography_sample_nondegenerate,
-                           _fill_homography_dlt!,
-                           _fill_fundamental_dlt!,
                            _vec9_to_mat33,
                            _oriented_epipolar_check,
                            projection_transform
@@ -95,6 +97,7 @@ export estimate_scale, chi2_threshold
 # -----------------------------------------------------------------------------
 export AbstractEstimator
 export AbstractRobustProblem
+export AbstractTaubinProblem, AbstractFNSProblem
 
 # -----------------------------------------------------------------------------
 # 2. ROBUST PROBLEM INTERFACE - Generic problem API

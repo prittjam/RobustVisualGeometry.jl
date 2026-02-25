@@ -7,28 +7,19 @@ using VisualGeometryCore: ScoringTrait, HasScore, NoScore, scoring
 using RobustVisualGeometry
 using RobustVisualGeometry: sample_size, data_size, model_type,
     solver_cardinality, SingleSolution, ProsacSampler, reset!,
-    RansacRefineProblem, MEstimator, FixedScale, robust_solve
+    RansacRefineProblem, MEstimator, FixedScale, robust_solve,
+    weighted_solve
 using VisualGeometryCore.Matching: Attributed, ScoredCspond, csponds
 
 # =============================================================================
 # Test Utilities
 # =============================================================================
 
-"""Apply homography H to 2D point (homogeneous multiply + perspective divide)."""
-function apply_homography(H::SMatrix{3,3,T,9}, p::SVector{2,T}) where T
-    h = H * SA[p[1], p[2], one(T)]
-    return SA[h[1]/h[3], h[2]/h[3]]
-end
-
 """Max reprojection error between two homographies on a set of test points."""
-function max_reprojection_error(H1, H2, test_points)
-    max_err = 0.0
-    for p in test_points
-        p1 = apply_homography(H1, p)
-        p2 = apply_homography(H2, p)
-        max_err = max(max_err, norm(p1 - p2))
-    end
-    return max_err
+function max_reprojection_error(H1::HomographyMat, H2::HomographyMat, test_points)
+    m1 = PerspectiveMap() ∘ ProjectiveMap(H1)
+    m2 = PerspectiveMap() ∘ ProjectiveMap(H2)
+    maximum(norm(m1(p) - m2(p)) for p in test_points)
 end
 
 # =============================================================================
@@ -40,23 +31,25 @@ function make_homography_data(; n_inliers=100, n_outliers=30, noise=0.5, seed=42
 
     # Ground truth homography: mild projective transform
     # (rotation + translation + slight perspective)
-    H_true = @SMatrix [
+    H_raw = @SMatrix [
          0.95  -0.10  15.0;
          0.12   0.93  -8.0;
          1e-4   2e-4   1.0
     ]
     # Normalize
-    H_true = H_true / norm(H_true)
-    if H_true[3,3] < 0
-        H_true = -H_true
+    H_raw = H_raw / norm(H_raw)
+    if H_raw[3,3] < 0
+        H_raw = -H_raw
     end
+    H_true = HomographyMat{Float64}(Tuple(H_raw))
 
     # Generate source points in image coordinate range [100, 900] x [100, 700]
+    warp = PerspectiveMap() ∘ ProjectiveMap(H_true)
     source_pts = SVector{2, Float64}[]
     target_pts = SVector{2, Float64}[]
     for _ in 1:n_inliers
         s = SA[100.0 + 800.0 * rand(rng), 100.0 + 600.0 * rand(rng)]
-        d = apply_homography(H_true, s) + SA[noise * randn(rng), noise * randn(rng)]
+        d = warp(s) + SA[noise * randn(rng), noise * randn(rng)]
         push!(source_pts, s)
         push!(target_pts, d)
     end
@@ -84,7 +77,7 @@ end
         p = HomographyProblem(csponds(src, dst))
         @test sample_size(p) == 4
         @test data_size(p) == 4
-        @test model_type(p) == SMatrix{3,3,Float64,9}
+        @test model_type(p) == HomographyMat{Float64}
         @test solver_cardinality(p) isa SingleSolution
 
         # Too few correspondences
@@ -120,22 +113,19 @@ end
         @test !isnothing(H)
 
         # Should be close to identity (up to scale)
-        H_id = SMatrix{3,3,Float64,9}(1,0,0, 0,1,0, 0,0,1) / norm(SMatrix{3,3,Float64,9}(1,0,0, 0,1,0, 0,0,1))
+        I3 = SMatrix{3,3,Float64,9}(1,0,0, 0,1,0, 0,0,1)
+        H_id = HomographyMat{Float64}(Tuple(I3 / norm(I3)))
         # Compare via reprojection
         test_pts = [SA[300.0, 400.0], SA[600.0, 300.0]]
         @test max_reprojection_error(H, H_id, test_pts) < 1e-10
     end
 
     @testset "4-point DLT solver — known H" begin
-        H_true = @SMatrix [
-            0.95 -0.10  15.0;
-            0.12  0.93  -8.0;
-            1e-4  2e-4   1.0
-        ]
-        H_true = H_true / norm(H_true)
+        H_raw = SMatrix{3,3,Float64,9}(0.95,0.12,1e-4, -0.10,0.93,2e-4, 15.0,-8.0,1.0)
+        H_true = HomographyMat{Float64}(Tuple(H_raw / norm(H_raw)))
 
         src = [SA[100.0, 200.0], SA[500.0, 100.0], SA[800.0, 600.0], SA[200.0, 700.0]]
-        dst = [apply_homography(H_true, s) for s in src]
+        dst = map(PerspectiveMap() ∘ ProjectiveMap(H_true), src)
 
         p = HomographyProblem(csponds(src, dst))
         H = solve(p, [1, 2, 3, 4])
@@ -147,16 +137,13 @@ end
 
     @testset "Inhomogeneous solver — small h33 case" begin
         # Homography with very small h33 (near-degeneracy for DLT with h33=1)
-        H_true = @SMatrix [
-            1.0  0.0    0.0;
-            0.0  1.0    0.0;
-            0.002 0.001  1e-4
-        ]
-        H_true = H_true / norm(H_true)
-        if H_true[3,3] < 0; H_true = -H_true; end
+        H_raw = SMatrix{3,3,Float64,9}(1.0,0.0,0.002, 0.0,1.0,0.001, 0.0,0.0,1e-4)
+        H_raw = H_raw / norm(H_raw)
+        if H_raw[3,3] < 0; H_raw = -H_raw; end
+        H_true = HomographyMat{Float64}(Tuple(H_raw))
 
         src = [SA[100.0, 200.0], SA[500.0, 100.0], SA[800.0, 600.0], SA[200.0, 700.0]]
-        dst = [apply_homography(H_true, s) for s in src]
+        dst = map(PerspectiveMap() ∘ ProjectiveMap(H_true), src)
 
         H = homography_4pt(src[1], src[2], src[3], src[4],
                                                 dst[1], dst[2], dst[3], dst[4])
@@ -167,11 +154,11 @@ end
     end
 
     @testset "Inhomogeneous solver — pure translation" begin
-        H_true = @SMatrix [1.0 0.0 50.0; 0.0 1.0 -30.0; 0.0 0.0 1.0]
-        H_true = H_true / norm(H_true)
+        H_raw = SMatrix{3,3,Float64,9}(1.0,0.0,0.0, 0.0,1.0,0.0, 50.0,-30.0,1.0)
+        H_true = HomographyMat{Float64}(Tuple(H_raw / norm(H_raw)))
 
         src = [SA[100.0, 200.0], SA[500.0, 100.0], SA[800.0, 600.0], SA[200.0, 700.0]]
-        dst = [apply_homography(H_true, s) for s in src]
+        dst = map(PerspectiveMap() ∘ ProjectiveMap(H_true), src)
 
         H = homography_4pt(src[1], src[2], src[3], src[4],
                                                 dst[1], dst[2], dst[3], dst[4])
@@ -182,16 +169,13 @@ end
     end
 
     @testset "Inhomogeneous solver — strong perspective" begin
-        H_true = @SMatrix [
-            2.0   0.5   100.0;
-           -0.3   1.5   -50.0;
-            0.002 0.001   1.0
-        ]
-        H_true = H_true / norm(H_true)
-        if H_true[3,3] < 0; H_true = -H_true; end
+        H_raw = SMatrix{3,3,Float64,9}(2.0,-0.3,0.002, 0.5,1.5,0.001, 100.0,-50.0,1.0)
+        H_raw = H_raw / norm(H_raw)
+        if H_raw[3,3] < 0; H_raw = -H_raw; end
+        H_true = HomographyMat{Float64}(Tuple(H_raw))
 
         src = [SA[100.0, 200.0], SA[500.0, 100.0], SA[800.0, 600.0], SA[200.0, 700.0]]
-        dst = [apply_homography(H_true, s) for s in src]
+        dst = map(PerspectiveMap() ∘ ProjectiveMap(H_true), src)
 
         H = homography_4pt(src[1], src[2], src[3], src[4],
                                                 dst[1], dst[2], dst[3], dst[4])
@@ -212,11 +196,11 @@ end
     end
 
     @testset "Symmetric transfer error" begin
-        H_true = @SMatrix [1.0 0.0 10.0; 0.0 1.0 -5.0; 0.0 0.0 1.0]
-        H_true = H_true / norm(H_true)
+        H_raw = @SMatrix [1.0 0.0 10.0; 0.0 1.0 -5.0; 0.0 0.0 1.0]
+        H_true = HomographyMat{Float64}(Tuple(H_raw / norm(H_raw)))
 
         src = [SA[100.0, 200.0], SA[0.0,0.0], SA[1.0,0.0], SA[0.0,1.0]]
-        dst = [apply_homography(H_true, src[1]), SA[10.0,-5.0], SA[11.0,-5.0], SA[10.0,-4.0]]
+        dst = [(PerspectiveMap() ∘ ProjectiveMap(H_true))(src[1]), SA[10.0,-5.0], SA[11.0,-5.0], SA[10.0,-4.0]]
         p = HomographyProblem(csponds(src, dst))
 
         r = Vector{Float64}(undef, 4)
@@ -303,33 +287,27 @@ end
         @test max_reprojection_error(H, H_true, test_pts) < 3.0
     end
 
-    @testset "IRLS — weighted_system + model_from_solution roundtrip" begin
-        H_true = @SMatrix [
+    @testset "IRLS — weighted DLT roundtrip" begin
+        H_raw = @SMatrix [
              0.95  -0.10  15.0;
              0.12   0.93  -8.0;
              1e-4   2e-4   1.0
         ]
-        H_true = H_true / norm(H_true)
-        if H_true[3,3] < 0; H_true = -H_true; end
+        H_raw = H_raw / norm(H_raw)
+        if H_raw[3,3] < 0; H_raw = -H_raw; end
+        H_true = HomographyMat{Float64}(Tuple(H_raw))
 
         rng = MersenneTwister(42)
         n = 20
         src = [SA[100.0 + 800.0*rand(rng), 100.0 + 600.0*rand(rng)] for _ in 1:n]
-        dst = [apply_homography(H_true, s) for s in src]
+        dst = map(PerspectiveMap() ∘ ProjectiveMap(H_true), src)
 
         p = HomographyProblem(csponds(src, dst))
         mask = trues(n)
-        w = ones(n)
 
-        sys = weighted_system(p, H_true, mask, w)
-        @test !isnothing(sys)
-        @test :A in propertynames(sys)
-        @test :T₁ in propertynames(sys)
-        @test :T₂ in propertynames(sys)
-
-        # Solve via SVD and reconstruct
-        h = svd(sys.A).Vt[end, :]
-        H_rec = model_from_solution(p, h, sys)
+        # weighted_solve through RansacRefineProblem calls DLT directly
+        adapter = RansacRefineProblem(p, mask, p._svd_ws)
+        H_rec = weighted_solve(adapter, H_true, ones(n))
         @test !isnothing(H_rec)
 
         test_pts = [SA[300.0, 400.0], SA[600.0, 300.0], SA[450.0, 550.0]]
@@ -337,19 +315,21 @@ end
     end
 
     @testset "IRLS — L2Loss recovers clean homography" begin
-        H_true = @SMatrix [
+        H_raw = @SMatrix [
              0.95  -0.10  15.0;
              0.12   0.93  -8.0;
              1e-4   2e-4   1.0
         ]
-        H_true = H_true / norm(H_true)
-        if H_true[3,3] < 0; H_true = -H_true; end
+        H_raw = H_raw / norm(H_raw)
+        if H_raw[3,3] < 0; H_raw = -H_raw; end
+        H_true = HomographyMat{Float64}(Tuple(H_raw))
 
         rng = MersenneTwister(42)
         n = 30
         noise = 0.3
         src = [SA[100.0 + 800.0*rand(rng), 100.0 + 600.0*rand(rng)] for _ in 1:n]
-        dst = [apply_homography(H_true, s) + SA[noise*randn(rng), noise*randn(rng)] for s in src]
+        warp = PerspectiveMap() ∘ ProjectiveMap(H_true)
+        dst = [warp(s) + SA[noise*randn(rng), noise*randn(rng)] for s in src]
 
         p = HomographyProblem(csponds(src, dst))
         mask = trues(n)
@@ -407,7 +387,7 @@ end
                         config=RansacConfig(max_trials=2000))
 
         @test result isa RansacEstimate
-        @test result.value isa SMatrix{3,3,Float64,9}
+        @test result.value isa HomographyMat{Float64}
         @test result.stop_reason === :converged
         @test result.inlier_mask isa BitVector
         @test result.residuals isa Vector{Float64}

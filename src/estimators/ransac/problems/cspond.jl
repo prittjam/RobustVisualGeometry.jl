@@ -3,16 +3,16 @@
 # =============================================================================
 #
 # AbstractCspondProblem{T} factors out the common structure shared by
-# HomographyProblem and FundamentalMatrixProblem: constructor helpers,
-# gather routines, and strategy-dispatched refinement.
+# HomographyProblem and FundamentalMatrixProblem: constructor helpers
+# and strategy-dispatched refinement.
 #
 # Each concrete problem implements:
 #   min_dlt_inliers(p) — minimum inlier count for DLT refit
-#   _dlt_refit(p, k)   — problem-specific DLT on first k gathered points
+#   _dlt_refit(p; mask, weights) — problem-specific DLT with mask/weights
 #
 # =============================================================================
 
-# Dependencies: StructArrays, FixedSizeArrays
+# Dependencies: StructArrays
 #               All estimation types available from parent module
 
 # =============================================================================
@@ -36,8 +36,29 @@ function min_dlt_inliers end
 function _dlt_refit end
 
 # =============================================================================
-# Shared Constructor Helper
+# Shared Constructor Helpers
 # =============================================================================
+
+"""
+    _make_cspond_problem(P, correspondences, sample_sz, dlt_rows_fn; refinement)
+
+Shared constructor for correspondence-based RANSAC problems.
+`dlt_rows_fn(n)` returns the number of rows for the DLT buffer.
+"""
+function _make_cspond_problem(::Type{P}, correspondences::AbstractVector,
+                               sample_sz::Int, dlt_rows_fn;
+                               refinement::AbstractRefinement=NoRefinement()) where P
+    n = length(correspondences)
+    n >= sample_sz || throw(ArgumentError(
+        "Need at least $sample_sz correspondences, got $n"))
+    cs, smplr = _build_cspond(correspondences, sample_sz)
+    T = eltype(first(correspondences).first)
+    n_rows = dlt_rows_fn(n)
+    P{T, typeof(smplr), typeof(refinement)}(
+        cs, smplr, refinement,
+        FixedSizeArray{T}(undef, n_rows, 9),
+        SVDWorkspace{T}(n_rows, 9))
+end
 
 function _build_cspond(correspondences::AbstractVector, sample_sz::Int)
     n = length(correspondences)
@@ -52,27 +73,7 @@ function _build_cspond(correspondences::AbstractVector, sample_sz::Int)
     end
     cs = StructArrays.StructArray{Pair{SVector{2,T},SVector{2,T}}}((u₁, u₂))
     smplr = _build_sampler(correspondences, sample_sz)
-    u₁_buf = FixedSizeArray{SVector{2,T}}(undef, n)
-    u₂_buf = FixedSizeArray{SVector{2,T}}(undef, n)
-    w_buf = FixedSizeArray{T}(undef, n)
-    return cs, smplr, u₁_buf, u₂_buf, w_buf
-end
-
-# =============================================================================
-# Gather Helpers
-# =============================================================================
-
-function _gather_cspond_inliers!(p::AbstractCspondProblem, mask::BitVector)
-    k = _gather_masked!(p._u₁_buf, p.cs.first, mask)
-    _gather_masked!(p._u₂_buf, p.cs.second, mask)
-    return k
-end
-
-function _gather_cspond_inliers!(p::AbstractCspondProblem, mask::BitVector, w)
-    k = _gather_masked!(p._u₁_buf, p.cs.first, mask)
-    _gather_masked!(p._u₂_buf, p.cs.second, mask)
-    _gather_masked!(p._w_buf, w, mask)
-    return k
+    return cs, smplr
 end
 
 # =============================================================================
@@ -93,10 +94,8 @@ _ransac_refine(::NoRefinement, ::AbstractCspondProblem, args...) = nothing
 
 function _ransac_refine(::DltRefinement, p::AbstractCspondProblem{T},
                         _model, mask::BitVector) where T
-    n_inliers = sum(mask)
-    n_inliers < min_dlt_inliers(p) && return nothing
-    _gather_cspond_inliers!(p, mask)
-    model_ref = _dlt_refit(p, n_inliers)
+    sum(mask) < min_dlt_inliers(p) && return nothing
+    model_ref = _dlt_refit(p; mask)
     isnothing(model_ref) && return nothing
     return (model_ref, one(T))
 end
@@ -116,4 +115,19 @@ function _ransac_refine(r::IrlsRefinement, p::AbstractCspondProblem{T},
                           init=model, scale=FixedScale(σ=Float64(σ)),
                           max_iter=r.max_iter)
     (result.value, σ)
+end
+
+# =============================================================================
+# Weighted Solve — passes mask + weights to DLT solver
+# =============================================================================
+
+function weighted_solve(a::RansacRefineProblem{<:AbstractCspondProblem}, model, ω)
+    p = a.problem
+    @inbounds for i in eachindex(ω, a.mask)
+        a.mask[i] || (ω[i] = zero(eltype(ω)))
+    end
+    sum(a.mask) < min_dlt_inliers(p) && return model
+    result = _dlt_refit(p; mask=a.mask, weights=ω)
+    isnothing(result) && return model
+    result
 end

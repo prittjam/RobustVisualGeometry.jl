@@ -471,7 +471,7 @@ end
 #
 # For Cases 2–3, residual_jacobian(problem, model, i) → (rᵢ, ∂θgᵢ_w, ℓᵢ_meas)
 # computes the whitened quantities and measurement log-determinant in one pass,
-# avoiding duplicate computation of _sampson_quantities.
+# avoiding duplicate computation of sampson_jacobians.
 # =============================================================================
 
 """

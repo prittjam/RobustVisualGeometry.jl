@@ -406,33 +406,6 @@ function _dispatch_solve(::Unconstrained, sys, ws::SVDWorkspace)
 end
 
 # =============================================================================
-# Shared Utility: Masked Gather (inlier compaction)
-# =============================================================================
-
-"""
-    _gather_masked!(dst, src, mask::BitVector) -> Int
-
-Compact elements of `src` where `mask` is `true` into `dst`, returning the count.
-
-Composable per-array primitive for inlier gathering:
-```julia
-k = _gather_masked!(u₁_buf, cs.first, mask)
-_gather_masked!(u₂_buf, cs.second, mask)
-_gather_masked!(w_buf, w, mask)
-```
-"""
-function _gather_masked!(dst, src, mask)
-    k = 0
-    @inbounds for i in eachindex(mask)
-        if mask[i]
-            k += 1
-            dst[k] = src[i]
-        end
-    end
-    return k
-end
-
-# =============================================================================
 # Problem Lifecycle: prepare! (called before RANSAC main loop)
 # =============================================================================
 
