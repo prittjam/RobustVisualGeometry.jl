@@ -122,8 +122,8 @@ AbstractLocalOptimization                    LO-RANSAC strategies
 ### Key design decisions
 
 - **Pluggable quality functions**: RANSAC loop is quality-agnostic via trait dispatch
-- **LO-RANSAC via `fit`**: Problems implement `fit(problem, mask, weights)` for WLS refit; LO strategies (`ConvergeThenRescore`, `StepAndRescore`) alternate refit + re-sweep
-- **Holy trait dispatch**: `SolverCardinality` (SingleSolution vs MultipleSolutions), `ConstraintType` (Constrained vs Unconstrained), `CovarianceStructure` (Homoscedastic vs Heteroscedastic vs Predictive)
+- **LO-RANSAC via `fit`**: Problems implement `fit(problem, mask, weights, strategy)` for WLS refit; LO strategies (`ConvergeThenRescore`, `StepAndRescore`) alternate refit + re-sweep
+- **Holy trait dispatch**: `SolverCardinality`, `ConstraintType`, `CovarianceStructure`, `FitStrategy` — compile-time dispatch on solver cardinality, gauge constraints, noise structure, and refit method
 - **Uncertainty quantification**: Full covariance propagation through Hartley normalization
 
 ## Documentation

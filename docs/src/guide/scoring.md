@@ -101,7 +101,8 @@ kwarg to `ransac()`:
 - `ConvergeThenRescore()` — WLS to convergence at fixed mask, then re-sweep (Strategy A)
 - `StepAndRescore()` — single WLS step, then re-sweep (Strategy B)
 
-Problems that support LO-RANSAC implement `fit(problem, mask, weights)`.
+Problems that support LO-RANSAC implement `fit(problem, mask, weights, strategy)`,
+where `strategy::FitStrategy` is resolved from `fit_strategy(lo)`.
 
 ```julia
 # LO-RANSAC with ConvergeThenRescore

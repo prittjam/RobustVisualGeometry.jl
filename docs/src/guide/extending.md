@@ -21,9 +21,12 @@ data_size(p::MyProblem) = length(p.data)
 # Type of the model being estimated
 model_type(::MyProblem) = SMatrix{3,3,Float64,9}
 
+# Codimension: number of independent constraint equations per point
+codimension(::MyProblem) = 1
+
 # Solve from a minimal sample (indices into data)
-function solve(p::MyProblem, sample_indices)
-    # Return a model or tuple of models
+function solve(p::MyProblem, sample_indices::AbstractVector{Int})
+    # Return a model or FixedModels{N,M}, or nothing on failure
 end
 
 # Compute residuals for all data points given a model
@@ -39,19 +42,26 @@ end
 
 ```julia
 # Validate a minimal sample before solving (e.g., reject degenerate configs)
-test_sample(p::MyProblem, sample_indices) = true
+test_sample(p::MyProblem, indices::AbstractVector{Int}) = true
 
 # Validate a model after solving (e.g., reject degenerate solutions)
-test_model(p::MyProblem, model) = true
+# Receives the sample indices used to fit the model for point-specific checks
+test_model(p::MyProblem, model, indices::AbstractVector{Int}) = true
 
-# Refine a model using all inliers (for DltRefinement / IrlsRefinement)
-function refine(p::MyProblem, model, inlier_mask)
-    # Return refined model
+# Validate model against its consensus (inlier) set
+test_consensus(p::MyProblem, model, mask::BitVector) = true
+
+# Weighted least-squares refit for LO-RANSAC
+function fit(p::MyProblem, mask::BitVector, weights::AbstractVector, ::LinearFit)
+    # Return refined model or nothing
 end
 
-# Number of solutions per sample (default: SingleSolution)
+# Number of solutions per sample (default: MultipleSolutions)
 solver_cardinality(::MyProblem) = SingleSolution()
 # Use MultipleSolutions() if solve() returns multiple models (e.g., P3P)
+
+# Measurement covariance structure (default: Homoscedastic)
+measurement_covariance(::MyProblem) = Homoscedastic()
 ```
 
 ### Usage

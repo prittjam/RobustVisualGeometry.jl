@@ -16,14 +16,19 @@ ransac
 AbstractRansacProblem
 sample_size
 model_type
+codimension
 solve
 residuals!
 test_sample
 test_model
+test_consensus
 fit
 solver_cardinality
 draw_sample!
-test_consensus
+measurement_covariance
+residual_jacobian
+measurement_logdets!
+solver_jacobian
 ```
 
 ## Samplers

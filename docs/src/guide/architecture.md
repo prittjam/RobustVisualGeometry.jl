@@ -38,8 +38,8 @@ AbstractRansacProblem                        RANSAC problem interface
 └── P3PProblem
 ```
 
-RANSAC problems implement: `sample_size`, `data_size`, `model_type`, `solve`,
-`residuals!`, and optionally `test_sample`, `test_model`, `fit`.
+RANSAC problems implement: `sample_size`, `data_size`, `model_type`, `codimension`,
+`solve`, `residuals!`, and optionally `test_sample`, `test_model`, `fit`.
 
 ### Quality Functions
 
@@ -61,8 +61,9 @@ alternating refit-resweep cycles. Controlled by `AbstractLocalOptimization`:
 - `ConvergeThenRescore` — WLS to convergence, then re-sweep (Strategy A)
 - `StepAndRescore` — single WLS step, then re-sweep (Strategy B)
 
-Problems that support LO-RANSAC implement `fit(problem, mask, weights)` for
-weighted least-squares fitting on the inlier subset.
+Problems that support LO-RANSAC implement `fit(problem, mask, weights, strategy)`
+for weighted least-squares fitting on the inlier subset, where `strategy::FitStrategy`
+is resolved from `fit_strategy(lo)`. The default strategy is `LinearFit()` (DLT via SVD).
 
 ## Holy Trait Dispatch
 
@@ -79,10 +80,14 @@ Key traits that control RANSAC behavior at compile time:
 
 RobustVisualGeometry imports geometry types, solvers, loss functions, and scale
 estimators from VGC. It extends VGC's `rho`, `psi`, `weight`, `tuning_constant`,
-`sampson_distance`, and `scale` with new methods.
+`sampson_distance`, `scale`, and `test_model` with new methods.
+
+Geometry-level model feasibility checks (`test_model` for `HomographyMat`,
+`FundamentalMat`) live in VGC and dispatch on model type. RVG problem wrappers
+extract sample points and delegate to these VGC methods.
 
 ```
-VisualGeometryCore (types, solvers, losses, scale)
+VisualGeometryCore (types, solvers, losses, scale, test_model)
         ↓
 RobustVisualGeometry (IRLS, GNC, RANSAC, problem implementations)
 ```
