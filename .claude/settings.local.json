@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(test:*)",
+      "mcp__julia-repl__usage_instructions",
+      "mcp__julia-repl__investigate_environment",
+      "mcp__julia-repl__exec_repl",
+      "Bash(julia:*)",
+      "mcp__julia-repl__remove-trailing-whitespace",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(head:*)",
+      "Bash(sort:*)",
+      "Bash(find:*)",
+      "Bash(wc:*)",
+      "Bash(git mv:*)",
+      "Bash(grep:*)",
+      "Bash(git stash:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git reset:*)",
+      "Bash(git:*)",
+      "WebFetch(domain:github.com)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "julia-repl"
+  ]
+}

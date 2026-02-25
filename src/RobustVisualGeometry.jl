@@ -184,88 +184,33 @@ export FMatTaubinProblem, FMatFNSProblem, FMatFitResult
 # =============================================================================
 # INCLUDE ORDER - Dependency-aware loading
 # =============================================================================
-#
-# DEPENDENCY GRAPH (arrows show "depends on"):
-#
-#   interface.jl          (AbstractEstimator, AbstractRobustProblem, RobustAttributes)
-#        ↓
-#   irls.jl               (MEstimator, LinearRobustProblem, robust_solve)
-#        ↓                 Uses: AbstractLoss/Scale from VGC, interface types
-#   gnc.jl                (GNCTruncatedLS, GNCGemanMcClure, GNCEstimator)
-#        ↓                 Uses: AbstractLoss/Scale from VGC, interface types
-#   ransac_interface.jl   (AbstractRansacProblem, quality functions, workspace)
-#        ↓                 Uses: Attributed from VGC, interface types
-#   ransac.jl             (RANSAC algorithm)
-#        ↓                 Uses: ransac_interface, losses, scale from VGC
-#   gep_solver.jl         (GEP solver, shared fitting helpers)
-#        ↓
-#   conic_fitting.jl      (Robust conic fitting)
-#        ↓                 Uses: Ellipse, HomEllipseMat from VGC
-#   line_fitting.jl       (Line fitting)
-#        ↓                 Uses: Line2D, Point2, Uncertain from VGC
-#   ransac_line.jl        (Line RANSAC problems)
-#        ↓                 Uses: line_fitting + VGC types
-#   ransac_cspond.jl      (Shared correspondence infrastructure)
-#        ↓                 Uses: ransac_interface + StructArrays + FixedSizeArrays
-#   ransac_p3p.jl         (P3P RANSAC)
-#        ↓                 Uses: EuclideanMap, p3p, CameraModel from VGC
-#   ransac_homography.jl  (Homography RANSAC)
-#        ↓                 Uses: homography solvers from VGC
-#   ransac_fundmat.jl     (F-matrix RANSAC)
-#        ↓                 Uses: fundamental_matrix solvers from VGC
-#   homography_fitting.jl (Homography fitting pipeline)
-#        ↓                 Uses: ransac_homography
-#   fundmat_fitting.jl    (F-matrix fitting pipeline)
-#                          Uses: ransac_fundmat
-#
-# =============================================================================
 
-# Interface: Abstract types and result struct
+# Shared interface
 include("interface.jl")
+include("gep.jl")
 
-# IRLS solver and MEstimator
-include("irls.jl")
+# Estimators — IRLS and GNC (peer to RANSAC)
+include("estimators/irls.jl")
+include("estimators/gnc.jl")
 
-# GNC solver and GNCEstimator
-include("gnc.jl")
-
-# RANSAC interface: abstract types, traits, workspace, config
+# Estimators — RANSAC framework (interface split happens in Phase 3)
 include("ransac_interface.jl")
+include("estimators/ransac/scoring.jl")
+include("estimators/ransac/loop.jl")
 
-# Scoring: quality functions, stopping strategies
-include("scoring.jl")
-
-# RANSAC algorithm: main loop, scoring, adaptive trials
-include("ransac.jl")
-
-# GEP solver and shared fitting helpers (used by conic_fitting, fundmat_fitting)
-include("gep_solver.jl")
-
-# Conic fitting — depends on interface + VGC Primitives (Ellipse, HomEllipseMat)
+# Fitting pipelines
 include("conic_fitting.jl")
+include("fitting/line.jl")
 
-# Line fitting — depends on VGC Primitives (Line2D, Point2, Uncertain)
-include("line_fitting.jl")
-
-# RANSAC line fitting — depends on line_fitting + VGC types
+# RANSAC problem implementations (line split happens in Phase 4)
 include("ransac_line.jl")
+include("estimators/ransac/problems/cspond.jl")
+include("estimators/ransac/problems/p3p.jl")
+include("estimators/ransac/problems/homography.jl")
+include("estimators/ransac/problems/fundmat.jl")
 
-# Shared correspondence RANSAC infrastructure
-include("ransac_cspond.jl")
-
-# P3P RANSAC — depends on VGC (EuclideanMap, p3p, CameraModel)
-include("ransac_p3p.jl")
-
-# Homography RANSAC — depends on VGC homography solvers
-include("ransac_homography.jl")
-
-# Fundamental matrix RANSAC — depends on VGC F-matrix solvers
-include("ransac_fundmat.jl")
-
-# Homography fitting — depends on ransac_homography
-include("homography_fitting.jl")
-
-# Fundamental matrix fitting — depends on ransac_fundmat + VGC solvers
-include("fundmat_fitting.jl")
+# Fitting pipelines — depend on RANSAC problems
+include("fitting/homography.jl")
+include("fitting/fundmat.jl")
 
 end # module RobustVisualGeometry
