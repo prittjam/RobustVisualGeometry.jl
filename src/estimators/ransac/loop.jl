@@ -182,41 +182,51 @@ function _try_model!(ws::RansacWorkspace{M,T}, problem,
 end
 
 # =============================================================================
-# _model_certain_penalties! — Trait-dispatched Phase 3 penalty computation
+# _rescore_model_certain! — Re-score with model-certain (Σ_θ = 0) scoring
 # =============================================================================
 #
-# Phase 3 (re-scoring after LO) is always "model certain" (Σ_θ = 0), so the
-# penalty depends only on measurement_covariance(problem):
-#   Homoscedastic   → ℓᵢ = 0 (constant factor cancels in sweep)
-#   Heteroscedastic → ℓᵢ = log|Σ̃_{gᵢ}| via measurement_logdets!
-# =============================================================================
-
-_model_certain_penalties!(out, problem, model) =
-    _model_certain_penalties!(out, problem, model, measurement_covariance(problem))
-
-_model_certain_penalties!(out, ::AbstractRansacProblem, _, ::Homoscedastic) =
-    fill!(out, zero(eltype(out)))
-
-_model_certain_penalties!(out, problem, model, ::Heteroscedastic) =
-    measurement_logdets!(out, problem, model)
-
-# =============================================================================
-# _rescore_model_certain! — Re-score with model-certain (Σ_θ = 0) penalties
+# Phase 3 (re-scoring after LO) is always "model certain" (Σ_θ = 0).
+# Dispatches on measurement_covariance(problem) to compute qᵢ and ℓᵢ:
+#   Homoscedastic   → residuals! + rᵢ², ℓᵢ = 0
+#   Heteroscedastic → residual_jacobian + _sq_norm(rᵢ), ℓᵢ = log|Σ̃_{gᵢ}|
+#
+# Mirrors score!(... ::Homoscedastic) and score!(... ::Heteroscedastic)
+# from scoring.jl, but without the Predictive path.
 # =============================================================================
 
 """
     _rescore_model_certain!(ws, problem, scoring, model) -> (score, k)
 
-Re-score a model using squared residuals and model-certain penalties.
-Used by both `_try_model!` (Phase 3) and `_finalize` after local optimization.
+Re-score a model with model-certain (Σ_θ = 0) scoring (Section 3.3).
+Dispatches on `measurement_covariance(problem)` for both qᵢ and ℓᵢ.
+
+Used by `_try_model!` (Phase 3), `_locally_optimize!`, and `_finalize`.
 """
-function _rescore_model_certain!(ws, problem, scoring, model)
+_rescore_model_certain!(ws, problem, scoring, model) =
+    _rescore_model_certain!(ws, problem, scoring, model, measurement_covariance(problem))
+
+# Homoscedastic: qᵢ = rᵢ², ℓᵢ = 0 (fast path)
+function _rescore_model_certain!(ws, problem, scoring, model, ::Homoscedastic)
     residuals!(ws.residuals, problem, model)
     n = length(ws.residuals)
     @inbounds for i in 1:n
         ws.scores[i] = ws.residuals[i]^2
     end
-    _model_certain_penalties!(ws.penalties, problem, model)
+    fill!(ws.penalties, zero(eltype(ws.penalties)))
+    score, k = sweep!(scoring, ws.scores, ws.penalties, n)
+    mask!(ws, scoring.perm, k)
+    (score, k)
+end
+
+# Heteroscedastic: qᵢ = rᵢᵀrᵢ via residual_jacobian, ℓᵢ = log|Σ̃_{gᵢ}|
+function _rescore_model_certain!(ws, problem, scoring, model, ::Heteroscedastic)
+    n = data_size(problem)
+    @inbounds for i in 1:n
+        rᵢ, _, ℓᵢ = residual_jacobian(problem, model, i)
+        ws.scores[i] = _sq_norm(rᵢ)
+        ws.residuals[i] = sqrt(ws.scores[i])
+        ws.penalties[i] = ℓᵢ
+    end
     score, k = sweep!(scoring, ws.scores, ws.penalties, n)
     mask!(ws, scoring.perm, k)
     (score, k)
