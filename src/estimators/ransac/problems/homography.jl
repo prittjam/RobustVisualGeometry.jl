@@ -2,7 +2,7 @@
 # RANSAC Homography Problem
 # =============================================================================
 #
-# Implements AbstractCspondProblem for 2D projective homography estimation
+# Implements AbstractDltProblem for 2D projective homography estimation
 # from point correspondences.
 #
 # PLACEMENT: Included from main VisualGeometryCore.jl (NOT from Estimators
@@ -19,7 +19,7 @@
 # =============================================================================
 
 """
-    HomographyProblem{T,S} <: AbstractCspondProblem{T}
+    HomographyProblem{T,S} <: AbstractDltProblem{T}
 
 RANSAC problem for estimating a 2D projective homography from point correspondences.
 
@@ -41,7 +41,7 @@ HomographyProblem(cs)
 - Residual: Sampson distance (EIV-corrected)
 - Degeneracy: Collinearity + convexity check
 """
-struct HomographyProblem{T<:AbstractFloat, S<:AbstractSampler} <: AbstractCspondProblem{T}
+struct HomographyProblem{T<:AbstractFloat, S<:AbstractSampler} <: AbstractDltProblem{T}
     cs::StructArrays.StructVector{Pair{SVector{2,T},SVector{2,T}}, @NamedTuple{first::Vector{SVector{2,T}}, second::Vector{SVector{2,T}}}}
     _sampler::S
     _dlt_buf::FixedSizeArray{T,2,Memory{T}}

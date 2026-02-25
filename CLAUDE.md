@@ -45,7 +45,7 @@ src/
 │       ├── loop.jl            # Main RANSAC loop (Algorithm 2)
 │       └── problems/          # Problem implementations
 │           ├── line.jl
-│           ├── cspond.jl      # AbstractCspondProblem base
+│           ├── cspond.jl      # AbstractCspondProblem, AbstractDltProblem
 │           ├── p3p.jl
 │           ├── homography.jl
 │           └── fundmat.jl

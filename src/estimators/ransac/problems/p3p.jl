@@ -24,7 +24,7 @@
 # =============================================================================
 
 """
-    P3PProblem{S,F} <: AbstractRansacProblem
+    P3PProblem{S,F} <: AbstractCspondProblem
 
 RANSAC problem for camera pose estimation from 3D-2D point correspondences.
 
@@ -52,7 +52,7 @@ problem = P3PProblem(scored, camera_model)
 - Residual: Forward reprojection error `||project(model, R*X+t) - u||` in pixels
 - Refinement: None (returns `nothing`)
 """
-struct P3PProblem{S<:AbstractSampler, F} <: AbstractRansacProblem
+struct P3PProblem{S<:AbstractSampler, F} <: AbstractCspondProblem
     cs::StructArrays.StructVector{Pair{SVector{3,Float64},SVector{2,Float64}}, @NamedTuple{first::Vector{SVector{3,Float64}}, second::Vector{SVector{2,Float64}}}}
     rays::Vector{SVector{3,Float64}}
     _proj::F
@@ -88,15 +88,13 @@ function P3PProblem(correspondences::AbstractVector, model::CameraModel)
     P3PProblem{typeof(smplr), typeof(proj)}(cs, rays, proj, smplr)
 end
 
-sampler(p::P3PProblem) = p._sampler
-
 # =============================================================================
 # AbstractRansacProblem Interface
 # =============================================================================
+# data_size and sampler inherited from AbstractCspondProblem
 
 sample_size(::P3PProblem) = 3
 codimension(::P3PProblem) = 2  # d_g = 2: two reprojection equations per point
-data_size(p::P3PProblem) = length(p.cs)
 model_type(::P3PProblem) = Pose3
 solver_cardinality(::P3PProblem) = MultipleSolutions()
 

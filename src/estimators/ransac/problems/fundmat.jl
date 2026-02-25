@@ -2,7 +2,7 @@
 # RANSAC Fundamental Matrix Problem
 # =============================================================================
 #
-# Implements AbstractCspondProblem for fundamental matrix estimation
+# Implements AbstractDltProblem for fundamental matrix estimation
 # from point correspondences.
 #
 # PLACEMENT: Included from main VisualGeometryCore.jl (NOT from Estimators
@@ -19,7 +19,7 @@
 # =============================================================================
 
 """
-    FundMatProblem{T,S} <: AbstractCspondProblem{T}
+    FundMatProblem{T,S} <: AbstractDltProblem{T}
 
 RANSAC problem for estimating a fundamental matrix from point correspondences.
 
@@ -41,7 +41,7 @@ FundMatProblem(cs)
 - Residual: Sampson distance
 - Degeneracy: Oriented epipolar constraint
 """
-struct FundMatProblem{T<:AbstractFloat, S<:AbstractSampler} <: AbstractCspondProblem{T}
+struct FundMatProblem{T<:AbstractFloat, S<:AbstractSampler} <: AbstractDltProblem{T}
     cs::StructArrays.StructVector{Pair{SVector{2,T},SVector{2,T}}, @NamedTuple{first::Vector{SVector{2,T}}, second::Vector{SVector{2,T}}}}
     _sampler::S
     _dlt_buf::FixedSizeArray{T,2,Memory{T}}

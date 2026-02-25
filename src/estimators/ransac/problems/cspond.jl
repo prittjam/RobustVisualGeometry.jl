@@ -2,9 +2,15 @@
 # Shared Infrastructure for Correspondence-based RANSAC Problems
 # =============================================================================
 #
-# AbstractCspondProblem{T} factors out the common structure shared by
-# HomographyProblem and FundMatProblem: constructor helpers
-# and shared interface methods.
+# Two-level type hierarchy:
+#
+#   AbstractCspondProblem <: AbstractRansacProblem
+#     Thin base for any correspondence problem (cs + sampler).
+#     Covers 3D-2D (P3P) and 2D-2D (homography, F-matrix) problems.
+#
+#   AbstractDltProblem{T} <: AbstractCspondProblem
+#     Adds DLT buffer + SVDWorkspace for 2D-2D linear algebraic solvers.
+#     HomographyProblem and FundMatProblem inherit from this.
 #
 # =============================================================================
 
@@ -12,10 +18,35 @@
 #               All estimation types available from parent module
 
 # =============================================================================
-# Abstract Type
+# Abstract Types
 # =============================================================================
 
-abstract type AbstractCspondProblem{T} <: AbstractRansacProblem end
+"""
+    AbstractCspondProblem <: AbstractRansacProblem
+
+Base type for RANSAC problems defined by point correspondences.
+
+Subtypes must have fields `cs` (a `StructVector` of `Pair`s) and
+`_sampler` (an `AbstractSampler`). Provides default implementations of
+`data_size(p) = length(p.cs)` and `sampler(p) = p._sampler`.
+
+Concrete subtypes:
+- [`AbstractDltProblem{T}`](@ref) — 2D-2D problems with DLT buffer (homography, F-matrix)
+- [`P3PProblem`](@ref) — 3D-2D pose estimation from bearing rays
+"""
+abstract type AbstractCspondProblem <: AbstractRansacProblem end
+
+"""
+    AbstractDltProblem{T} <: AbstractCspondProblem
+
+Base type for 2D-2D correspondence problems that use a DLT linear solver.
+
+Adds pre-allocated `_dlt_buf::FixedSizeArray{T}` and `_svd_ws::SVDWorkspace{T}`
+for zero-allocation weighted DLT fitting in LO-RANSAC.
+
+Concrete subtypes: [`HomographyProblem`](@ref), [`FundMatProblem`](@ref).
+"""
+abstract type AbstractDltProblem{T} <: AbstractCspondProblem end
 
 # =============================================================================
 # Shared Interface Methods
@@ -25,13 +56,13 @@ data_size(p::AbstractCspondProblem) = length(p.cs)
 sampler(p::AbstractCspondProblem) = p._sampler
 
 # =============================================================================
-# Shared Constructor Helpers
+# Shared Constructor Helpers (DLT problems)
 # =============================================================================
 
 """
     _make_cspond_problem(P, correspondences, sample_sz, dlt_rows_fn)
 
-Shared constructor for correspondence-based RANSAC problems.
+Shared constructor for DLT correspondence problems.
 `dlt_rows_fn(n)` returns the number of rows for the DLT buffer.
 """
 function _make_cspond_problem(::Type{P}, correspondences::AbstractVector,

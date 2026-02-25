@@ -39,10 +39,11 @@ AbstractRansacProblem                        RANSAC problem interface
 ├── LineFittingProblem
 ├── InhomLineFittingProblem
 ├── EivLineFittingProblem
-├── AbstractCspondProblem{T}                 Correspondence-based problems
-│   ├── HomographyProblem{T,S}
-│   └── FundMatProblem{T,S}
-└── P3PProblem{S,F}
+└── AbstractCspondProblem                    Correspondence-based problems
+    ├── AbstractDltProblem{T}                2D-2D with DLT buffer
+    │   ├── HomographyProblem{T,S}
+    │   └── FundMatProblem{T,S}
+    └── P3PProblem{S,F}                     3D-2D (bearing rays + projection)
 ```
 
 RANSAC problems implement: `sample_size`, `data_size`, `model_type`, `codimension`,

@@ -14,6 +14,8 @@ ransac
 
 ```@docs
 AbstractRansacProblem
+AbstractCspondProblem
+AbstractDltProblem
 sample_size
 model_type
 codimension

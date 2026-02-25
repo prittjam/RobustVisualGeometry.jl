@@ -169,7 +169,7 @@ export fit_line_ransac
 # -----------------------------------------------------------------------------
 # 9. RANSAC PROBLEM TYPES - Correspondence problems
 # -----------------------------------------------------------------------------
-export AbstractCspondProblem
+export AbstractCspondProblem, AbstractDltProblem
 export HomographyProblem
 export FundMatProblem
 export P3PProblem, Pose3
