@@ -36,7 +36,7 @@ println("Inliers: $(sum(inliers)) / $(length(inliers))")
 ### RANSAC Fundamental Matrix
 
 ```julia
-problem = FundamentalMatrixProblem(csponds(src, dst))
+problem = FundMatProblem(csponds(src, dst))
 scoring = MarginalQuality(problem, 50.0)  # a = outlier half-width
 result = ransac(problem, scoring)
 
@@ -106,7 +106,7 @@ AbstractRobustProblem                        Generic robust optimization
 AbstractRansacProblem                        RANSAC problem interface
 ├── LineFittingProblem
 ├── HomographyProblem
-├── FundamentalMatrixProblem
+├── FundMatProblem
 └── P3PProblem
 
 AbstractQualityFunction                      RANSAC quality scoring

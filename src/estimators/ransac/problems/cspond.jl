@@ -3,7 +3,7 @@
 # =============================================================================
 #
 # AbstractCspondProblem{T} factors out the common structure shared by
-# HomographyProblem and FundamentalMatrixProblem: constructor helpers
+# HomographyProblem and FundMatProblem: constructor helpers
 # and shared interface methods.
 #
 # =============================================================================

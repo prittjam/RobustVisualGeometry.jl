@@ -227,9 +227,9 @@ problem_dof(::FMatFNSProblem) = _FMAT_DOF
 """
     FMatFitResult{T}
 
-Type alias for `Attributed{FundamentalMat{T}, RobustAttributes{T}}`.
+Type alias for `Attributed{FundMat{T}, RobustAttributes{T}}`.
 """
-const FMatFitResult{T} = Attributed{FundamentalMat{T}, RobustAttributes{T}}
+const FMatFitResult{T} = Attributed{FundMat{T}, RobustAttributes{T}}
 
 function Base.show(io::IO, r::FMatFitResult{T}) where {T}
     n_inliers = count(>(0.5), r.weights)
@@ -265,11 +265,11 @@ end
 Unnormalize F, recompute Sampson residuals in original coordinates.
 """
 function _finalize_fmat_result(result, T1, T2, u1, u2, sigma)
-    F_norm = FundamentalMat{Float64}(Tuple(_vec9_to_mat33(result.value, Float64)))
+    F_norm = FundMat{Float64}(Tuple(_vec9_to_mat33(result.value, Float64)))
     F_rank2 = enforce_rank_two(F_norm)
     F = hartley_unnormalize(F_rank2, T1, T2)
     if F === nothing
-        F = FundamentalMat{Float64}(Tuple(SMatrix{3,3,Float64,9}(F_rank2) / norm(F_rank2)))
+        F = FundMat{Float64}(Tuple(SMatrix{3,3,Float64,9}(F_rank2) / norm(F_rank2)))
     end
     n = length(u1)
     residuals = Vector{Float64}(undef, n)
@@ -417,7 +417,7 @@ function fit_fundmat(correspondences;
     config::RansacConfig = RansacConfig(),
     outlier_halfwidth::Real = 50.0)
 
-    prob = FundamentalMatrixProblem(correspondences)
+    prob = FundMatProblem(correspondences)
     scoring = something(quality, MarginalQuality(prob, Float64(outlier_halfwidth)))
     ransac(prob, scoring; config)
 end

@@ -7,7 +7,7 @@ CurrentModule = RobustVisualGeometry
 ## RANSAC Problems
 
 ```@docs
-FundamentalMatrixProblem
+FundMatProblem
 ```
 
 ## Problem Types

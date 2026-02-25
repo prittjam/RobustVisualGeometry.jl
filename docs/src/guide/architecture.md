@@ -34,7 +34,7 @@ Each problem type implements a standard interface: `initial_solve`, `compute_res
 AbstractRansacProblem                        RANSAC problem interface
 ├── LineFittingProblem
 ├── HomographyProblem
-├── FundamentalMatrixProblem
+├── FundMatProblem
 └── P3PProblem
 ```
 
@@ -83,7 +83,7 @@ estimators from VGC. It extends VGC's `rho`, `psi`, `weight`, `tuning_constant`,
 `sampson_distance`, `scale`, and `test_model` with new methods.
 
 Geometry-level model feasibility checks (`test_model` for `HomographyMat`,
-`FundamentalMat`) live in VGC and dispatch on model type. RVG problem wrappers
+`FundMat`) live in VGC and dispatch on model type. RVG problem wrappers
 extract sample points and delegate to these VGC methods.
 
 ```

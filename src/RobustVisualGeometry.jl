@@ -31,7 +31,7 @@ using VisualGeometryCore: Point2, Line2D, Ellipse, Uncertain,
                           Attributed, AbstractAttributes,
                           HomEllipseMat, CameraModel,
                           EuclideanMap,
-                          HomographyMat, FundamentalMat
+                          HomographyMat, FundMat
 
 # Scoring trait
 using VisualGeometryCore: HasScore, scoring
@@ -57,7 +57,7 @@ using VisualGeometryCore: normal, param_cov, sign_normalize,
 # Solvers
 using VisualGeometryCore: homography_4pt, homography_4pt_with_jacobian,
                           homography_dlt!,
-                          fundamental_matrix_7pt, fundamental_matrix_dlt!,
+                          fundmat_7pt, fundmat_dlt!,
                           p3p
 
 # Import VGC functions we need to extend with new methods in RVG.
@@ -170,7 +170,7 @@ export fit_line_ransac
 # -----------------------------------------------------------------------------
 export AbstractCspondProblem
 export HomographyProblem
-export FundamentalMatrixProblem
+export FundMatProblem
 export P3PProblem, Pose3
 
 # -----------------------------------------------------------------------------

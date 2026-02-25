@@ -30,7 +30,7 @@ function cameras_to_fundmat(K₁, R₁, t₁, K₂, R₂, t₂)
     F = inv(K₂)' * E * inv(K₁)
     F = F / norm(F)
     if F[3,3] < 0; F = -F; end
-    return FundamentalMat{Float64}(Tuple(F))
+    return FundMat{Float64}(Tuple(F))
 end
 
 """Project 3D point to 2D using camera (K, R, t)."""
@@ -124,19 +124,19 @@ end
 
 @testset "RANSAC Fundamental Matrix" begin
 
-    @testset "FundamentalMatrixProblem construction" begin
+    @testset "FundMatProblem construction" begin
         src, dst, _ = make_exact_fundmat_data(n=10)
-        p = FundamentalMatrixProblem(csponds(src, dst))
+        p = FundMatProblem(csponds(src, dst))
         @test sample_size(p) == 7
         @test data_size(p) == 10
-        @test model_type(p) == FundamentalMat{Float64}
+        @test model_type(p) == FundMat{Float64}
         @test solver_cardinality(p) isa MultipleSolutions
 
         # Too few correspondences
-        @test_throws ArgumentError FundamentalMatrixProblem(csponds(src[1:6], dst[1:6]))
+        @test_throws ArgumentError FundMatProblem(csponds(src[1:6], dst[1:6]))
 
         # UniformSampler for Pair correspondences
-        @test p isa FundamentalMatrixProblem{Float64}
+        @test p isa FundMatProblem{Float64}
     end
 
     @testset "Cubic solver" begin
@@ -176,7 +176,7 @@ end
 
     @testset "7-point solver — exact data" begin
         src, dst, F_true = make_exact_fundmat_data(n=7)
-        p = FundamentalMatrixProblem(csponds(src, dst))
+        p = FundMatProblem(csponds(src, dst))
 
         solutions = solve(p, collect(1:7))
         @test !isnothing(solutions)
@@ -193,7 +193,7 @@ end
 
     @testset "Sampson distance" begin
         src, dst, F_true = make_exact_fundmat_data(n=10)
-        p = FundamentalMatrixProblem(csponds(src, dst))
+        p = FundMatProblem(csponds(src, dst))
 
         r = Vector{Float64}(undef, 10)
         residuals!(r, p, F_true)
@@ -205,7 +205,7 @@ end
     @testset "Sampson distance — with noise" begin
         src, dst, F_true, _, _, _, _, _, _, _ = make_fundmat_data(
             n_inliers=50, n_outliers=0, noise=1.0, seed=42)
-        p = FundamentalMatrixProblem(csponds(src, dst))
+        p = FundMatProblem(csponds(src, dst))
 
         r = Vector{Float64}(undef, 50)
         residuals!(r, p, F_true)
@@ -217,7 +217,7 @@ end
 
     @testset "fit — DLT roundtrip" begin
         src, dst, F_true = make_exact_fundmat_data(n=20)
-        p = FundamentalMatrixProblem(csponds(src, dst))
+        p = FundMatProblem(csponds(src, dst))
         mask = trues(20)
         w = ones(20)
 
@@ -239,12 +239,12 @@ end
         # solutions, but RANSAC scoring will discard them.
         src_c = [SA[0.0+i*10.0, 100.0] for i in 0:6]
         dst_ok = [SA[10.0+i*30.0, 20.0+i*15.0] for i in 0:6]
-        p = FundamentalMatrixProblem(csponds(src_c, dst_ok))
+        p = FundMatProblem(csponds(src_c, dst_ok))
         @test test_sample(p, collect(1:7))  # always true by design
 
         # Non-degenerate points should produce a valid solution
         src_ok, dst_ok2, _ = make_exact_fundmat_data(n=7)
-        p2 = FundamentalMatrixProblem(csponds(src_ok, dst_ok2))
+        p2 = FundMatProblem(csponds(src_ok, dst_ok2))
         @test test_sample(p2, collect(1:7))
         @test !isnothing(solve(p2, collect(1:7)))
     end
@@ -252,7 +252,7 @@ end
     @testset "RANSAC — Cauchy + FixedScale" begin
         source_pts, target_pts, F_true, n_inliers, = make_fundmat_data(
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
-        problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
+        problem = FundMatProblem(csponds(source_pts, target_pts))
 
         result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000, min_trials=500))
@@ -279,7 +279,7 @@ end
     @testset "RANSAC — L2 + FixedScale" begin
         source_pts, target_pts, F_true, _ = make_fundmat_data(
             n_inliers=100, n_outliers=30, noise=0.3, seed=123)
-        problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
+        problem = FundMatProblem(csponds(source_pts, target_pts))
 
         result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000))
@@ -293,7 +293,7 @@ end
     @testset "RANSAC — high outlier rate" begin
         source_pts, target_pts, F_true, _ = make_fundmat_data(
             n_inliers=50, n_outliers=100, noise=0.5, seed=456)
-        problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
+        problem = FundMatProblem(csponds(source_pts, target_pts))
 
         result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=10000, min_trials=1000))
@@ -306,7 +306,7 @@ end
 
     @testset "fit — too few inliers returns nothing" begin
         src, dst, _ = make_exact_fundmat_data(n=7)
-        p = FundamentalMatrixProblem(csponds(src, dst))
+        p = FundMatProblem(csponds(src, dst))
         mask = trues(7)  # 7 < 8 = min for DLT
         @test isnothing(fit(p, mask, ones(7), LinearFit()))
     end
@@ -314,7 +314,7 @@ end
     @testset "LO-RANSAC — ConvergeThenRescore" begin
         source_pts, target_pts, F_true, n_inliers = make_fundmat_data(
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
-        problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
+        problem = FundMatProblem(csponds(source_pts, target_pts))
 
         result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         local_optimization=ConvergeThenRescore(),
@@ -330,7 +330,7 @@ end
     @testset "LO-RANSAC — StepAndRescore" begin
         source_pts, target_pts, F_true, n_inliers = make_fundmat_data(
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
-        problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
+        problem = FundMatProblem(csponds(source_pts, target_pts))
 
         result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         local_optimization=StepAndRescore(),
@@ -346,7 +346,7 @@ end
     @testset "Plain RANSAC integration" begin
         source_pts, target_pts, F_true, n_inliers = make_fundmat_data(
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
-        problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
+        problem = FundMatProblem(csponds(source_pts, target_pts))
 
         result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000, min_trials=500))
@@ -358,13 +358,13 @@ end
 
     @testset "Estimate integration" begin
         source_pts, target_pts, _, _ = make_fundmat_data()
-        problem = FundamentalMatrixProblem(csponds(source_pts, target_pts))
+        problem = FundMatProblem(csponds(source_pts, target_pts))
 
         result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000))
 
         @test result isa RansacEstimate
-        @test result.value isa FundamentalMat{Float64}
+        @test result.value isa FundMat{Float64}
         @test result.inlier_mask isa BitVector
         @test result.residuals isa Vector{Float64}
         @test result.weights isa Vector{Float64}

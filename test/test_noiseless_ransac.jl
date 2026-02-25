@@ -80,7 +80,7 @@ end
     u₁ = [c.first for c in cs]
     u₂ = [c.second for c in cs]
 
-    F_est = fundamental_matrix_dlt(u₁, u₂)
+    F_est = fundmat_dlt(u₁, u₂)
 
     # Verify epipolar constraint
     max_epi = 0.0
@@ -195,7 +195,7 @@ end
             cs, F_true = make_fundmat_data(rng, n_in, n_out)
             shuffle!(rng, cs)
 
-            problem = FundamentalMatrixProblem(cs)
+            problem = FundMatProblem(cs)
             config = RansacConfig(; max_trials=200_000, confidence=0.9999, min_trials=500)
             # Use MarginalQuality with very small outlier halfwidth for noiseless data
             scoring = MarginalQuality(data_size(problem), sample_size(problem), 1e-4)

@@ -61,25 +61,16 @@ solver_cardinality(::HomographyProblem) = SingleSolution()
 codimension(::HomographyProblem) = 2  # d_g = 2: two constraint equations from v̄ = λHū
 measurement_covariance(::HomographyProblem) = Homoscedastic()
 
-function solve(p::HomographyProblem, idx::AbstractVector{Int})
-    u₁ = p.cs.first; u₂ = p.cs.second
-    @inbounds homography_4pt(
-        u₁[idx[1]], u₁[idx[2]], u₁[idx[3]], u₁[idx[4]],
-        u₂[idx[1]], u₂[idx[2]], u₂[idx[3]], u₂[idx[4]])
-end
+solve(p::HomographyProblem, idx::AbstractVector{Int}) = homography_4pt(p.cs, idx)
 
 residuals!(r::Vector, p::HomographyProblem{T}, H::HomographyMat{T}) where T =
     sampson_distances!(r, H, p.cs)
 
-function test_sample(p::HomographyProblem{T}, idx::AbstractVector{Int}) where T
-    u₁ = p.cs.first; u₂ = p.cs.second
-    @inbounds _homography_sample_nondegenerate(
-        u₁[idx[1]], u₁[idx[2]], u₁[idx[3]], u₁[idx[4]],
-        u₂[idx[1]], u₂[idx[2]], u₂[idx[3]], u₂[idx[4]])
-end
+test_sample(p::HomographyProblem, idx::AbstractVector{Int}) =
+    _homography_sample_nondegenerate(p.cs, idx)
 
 test_model(p::HomographyProblem{T}, H::HomographyMat{T}, idx::AbstractVector{Int}) where T =
-    @inbounds test_model(H, SVector(ntuple(i -> p.cs.first[idx[i]], Val(4))))
+    test_model(H, p.cs, idx)
 
 # =============================================================================
 # fit — Weighted DLT for LO-RANSAC
@@ -109,18 +100,10 @@ Returns `(J=J, H=H_fwd)` where:
 - `H`: the forward homography (Frobenius-normalized, H[3,3] ≥ 0)
 """
 function solver_jacobian(p::HomographyProblem{T}, idx::AbstractVector{Int},
-                                     H::HomographyMat{T}) where T
-    u₁ = p.cs.first; u₂ = p.cs.second
-
-    @inbounds begin
-        s1 = u₁[idx[1]]; s2 = u₁[idx[2]]; s3 = u₁[idx[3]]; s4 = u₁[idx[4]]
-        d1 = u₂[idx[1]]; d2 = u₂[idx[2]]; d3 = u₂[idx[3]]; d4 = u₂[idx[4]]
-    end
-
-    result = homography_4pt_with_jacobian(s1, s2, s3, s4, d1, d2, d3, d4)
+                         H::HomographyMat{T}) where T
+    result = homography_4pt_with_jacobian(p.cs, idx)
     isnothing(result) && return nothing
     H_fwd, J = result
-
     return (J=J, H=H_fwd)
 end
 

@@ -232,7 +232,7 @@ function make_fundmat_problem(seed, n_inliers, n_outliers)
     outlier_frac = n_outliers > 0 ? n_outliers / n_total : 0.0
     cs, _, _ = stereo_correspondences(CONVERGENCE_RIG;
         n=n_inliers, outlier_frac, sigma=0.0, seed)
-    return FundamentalMatrixProblem(cs)
+    return FundMatProblem(cs)
 end
 
 # =============================================================================
