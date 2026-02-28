@@ -8,7 +8,7 @@
 #   1. AbstractScoring
 #   2. Uncertain{M} type dispatch for model-uncertain scoring
 #   3. Local optimization strategies (NoLocalOptimization)
-#   4. MarginalScoring{P} (P=Nothing for model-certain, P=Predictive for model-uncertain)
+#   4. MarginalScoring{P,DG} (P=Nothing|Predictive, DG=codimension as type param)
 #   5. init_score, default_local_optimization, _score_improved
 #
 # DEPENDENCY: Requires AbstractRansacProblem from ransac_interface.jl
@@ -165,14 +165,13 @@ See also: [`MarginalScoring`](@ref), [`PredictiveMarginalScoring`](@ref)
 struct Predictive end
 
 """
-    MarginalScoring{P} <: AbstractScoring
+    MarginalScoring{P, DG} <: AbstractScoring
 
 Scale-free marginal score (Section 3, Eq. 12).
 
-Parameterized by `P`:
-- `MarginalScoring{Nothing}` — Model-certain: treats θ as exact (Σ_θ = 0).
-- `MarginalScoring{Predictive}` — Model-uncertain: incorporates estimation
-  uncertainty Σ̃_θ via per-point leverages (Section 4, Eq. 20).
+Parameterized by:
+- `P`: `Nothing` (model-certain) or `Predictive` (model-uncertain)
+- `DG::Int`: Codimension dg of the model manifold (compile-time constant)
 
 The score marginalizes σ² under the Jeffreys prior π(σ²) ∝ 1/σ²:
 
@@ -188,19 +187,19 @@ model estimation uncertainty.
 # Fields
 - `log2a::Float64`: log(2a), precomputed outlier penalty per point
 - `model_dof::Int`: Minimal sample size m = ⌈n_θ/dg⌉
-- `codimension::Int`: Codimension dg of the model manifold
 - `perm::Vector{Int}`: Pre-allocated sortperm buffer (mutated by `sweep!`)
 - `lg_table::Vector{Float64}`: Precomputed log Γ(k·dg/2) for k = 1..N; indexed as lg_table[k−m] in sweep!
 - `scratch::Vector{Int}`: Pre-allocated scratch buffer for `sortperm!` (eliminates per-call allocation)
 """
-mutable struct MarginalScoring{P} <: AbstractScoring
+mutable struct MarginalScoring{P, DG} <: AbstractScoring
     log2a::Float64
     model_dof::Int
-    codimension::Int
     perm::Vector{Int}
     lg_table::Vector{Float64}
     scratch::Vector{Int}       # pre-allocated scratch for sortperm!
 end
+
+codimension(::MarginalScoring{P, DG}) where {P, DG} = DG
 
 """
     PredictiveMarginalScoring
@@ -245,15 +244,21 @@ function _build_lg_table(n::Int, d_g::Int=1)
     return lg
 end
 
-function MarginalScoring{P}(n::Int, p::Int, a::Float64; codimension::Int=1) where P
+# Fully-specified constructor: both P and DG known
+function MarginalScoring{P, DG}(n::Int, p::Int, a::Float64) where {P, DG}
     a > 0 || throw(ArgumentError("outlier_halfwidth must be positive, got $a"))
-    lg = _build_lg_table(n, codimension)
-    MarginalScoring{P}(log(2a), p, codimension, Vector{Int}(undef, n), lg, Vector{Int}(undef, n))
+    lg = _build_lg_table(n, DG)
+    MarginalScoring{P, DG}(log(2a), p, Vector{Int}(undef, n), lg, Vector{Int}(undef, n))
+end
+
+# Keyword convenience: codimension kwarg → type parameter
+function MarginalScoring{P}(n::Int, p::Int, a::Float64; codimension::Int=1) where P
+    MarginalScoring{P, codimension}(n, p, a)
 end
 
 # Bare MarginalScoring(n, p, a) defaults to model-certain
 MarginalScoring(n::Int, p::Int, a::Float64; codimension::Int=1) =
-    MarginalScoring{Nothing}(n, p, a; codimension=codimension)
+    MarginalScoring{Nothing, codimension}(n, p, a)
 
 """
     MarginalScoring(problem::AbstractRansacProblem, a::Float64)
@@ -262,12 +267,10 @@ MarginalScoring(n::Int, p::Int, a::Float64; codimension::Int=1) =
 Problem-aware constructor. Derives N, m, and dg from the problem.
 """
 MarginalScoring(problem::AbstractRansacProblem, a::Float64) =
-    MarginalScoring{Nothing}(data_size(problem), sample_size(problem), a;
-                              codimension=codimension(problem))
+    MarginalScoring{Nothing, codimension(problem)}(data_size(problem), sample_size(problem), a)
 
 function MarginalScoring{P}(problem::AbstractRansacProblem, a::Float64) where P
-    MarginalScoring{P}(data_size(problem), sample_size(problem), a;
-                        codimension=codimension(problem))
+    MarginalScoring{P, codimension(problem)}(data_size(problem), sample_size(problem), a)
 end
 
 """
@@ -361,9 +364,9 @@ function sweep!(perm::Vector{Int}, lg_table::Vector{Float64},
     return best_S, best_k
 end
 
-# Dispatch wrapper for all MarginalScoring{P} variants
-sweep!(s::MarginalScoring, scores::Vector{T}, n::Int) where T =
-    sweep!(s.perm, s.lg_table, s.model_dof, s.log2a, s.codimension, scores, n;
+# Dispatch wrapper — DG is compile-time via type parameter
+sweep!(s::MarginalScoring{<:Any, DG}, scores::Vector{T}, n::Int) where {DG, T} =
+    sweep!(s.perm, s.lg_table, s.model_dof, s.log2a, DG, scores, n;
            scratch=s.scratch)
 
 # =============================================================================

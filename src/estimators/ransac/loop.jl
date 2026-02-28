@@ -240,7 +240,7 @@ function init_state(method::PosteriorIrlsMethod{S,K,M,T}, problem, θ₀) where 
 
     # Compute posterior weights from the sweep partition
     w = Vector{T}(undef, n)
-    _posterior_weights!(w, ws.scores, scoring.perm, k, scoring.codimension, scoring.model_dof, scoring.log2a)
+    _posterior_weights!(w, ws.scores, scoring.perm, k, codimension(scoring), scoring.model_dof, scoring.log2a)
 
     PosteriorIrlsState{M,T}(w, θ₀, score, score)
 end
@@ -272,7 +272,7 @@ function update_weights!(state::PosteriorIrlsState{M,T}, method::PosteriorIrlsMe
     ws = method.ws
     scoring = method.scoring
     k = sum(ws.mask)
-    _posterior_weights!(state.w, ws.scores, scoring.perm, k, scoring.codimension, scoring.model_dof, scoring.log2a)
+    _posterior_weights!(state.w, ws.scores, scoring.perm, k, codimension(scoring), scoring.model_dof, scoring.log2a)
 end
 
 function post_step!(state::PosteriorIrlsState, method::PosteriorIrlsMethod, prob, θ, iter)
@@ -385,7 +385,7 @@ function _finalize(scoring::MarginalScoring,
         _score_and_sweep!(ws, problem, scoring, model)
     end
 
-    d_g = scoring.codimension
+    d_g = codimension(scoring)
     s, nu, w = _inlier_scale_and_weights(ws.residuals, ws.mask, p, d_g)
 
     base_attrs = RansacAttributes(:converged;

@@ -121,7 +121,7 @@ end
         mq_manual = MarginalScoring(50, 2, 50.0; codimension=1)
         @test mq.log2a == mq_manual.log2a
         @test mq.model_dof == mq_manual.model_dof
-        @test mq.codimension == mq_manual.codimension
+        @test codimension(mq) == codimension(mq_manual)
         @test length(mq.perm) == length(mq_manual.perm)
         @test length(mq.lg_table) == length(mq_manual.lg_table)
 
@@ -130,7 +130,7 @@ end
         pmq_manual = PredictiveMarginalScoring(50, 2, 30.0; codimension=1)
         @test pmq.log2a == pmq_manual.log2a
         @test pmq.model_dof == pmq_manual.model_dof
-        @test pmq.codimension == pmq_manual.codimension
+        @test codimension(pmq) == codimension(pmq_manual)
         @test length(pmq.perm) == length(pmq_manual.perm)
         @test length(pmq.lg_table) == length(pmq_manual.lg_table)
 
@@ -143,12 +143,12 @@ end
         hprob = HomographyProblem(cs)
         hmq = MarginalScoring(hprob, 50.0)
         @test hmq.model_dof == 4  # sample_size
-        @test hmq.codimension == 2
+        @test codimension(hmq) == 2
         @test length(hmq.perm) == 5
 
         hpmq = PredictiveMarginalScoring(hprob, 50.0)
         @test hpmq.model_dof == 4
-        @test hpmq.codimension == 2
+        @test codimension(hpmq) == 2
     end
 
     @testset "PredictiveMarginalScoring — end-to-end" begin
