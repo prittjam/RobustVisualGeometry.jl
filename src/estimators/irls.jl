@@ -3,6 +3,7 @@
 # =============================================================================
 #
 # Generic IRLS solver for M-estimation problems via AbstractRobustProblem.
+# Uses the generic irls! loop from irls_framework.jl.
 
 # -----------------------------------------------------------------------------
 # M-Estimator Type
@@ -28,7 +29,7 @@ MEstimator(CauchyLoss; c=3.0)      # with loss type and kwargs
 
 # Example
 ```julia
-result = robust_solve(problem, MEstimator(TukeyLoss()))
+result = fit(problem, MEstimator(TukeyLoss()))
 θ = result.value
 ```
 """
@@ -51,7 +52,7 @@ Wraps a design matrix `A` and response vector `b` as a robust problem.
 # Example
 ```julia
 prob = LinearRobustProblem(A, b)
-result = robust_solve(prob, MEstimator(TukeyLoss()))
+result = fit(prob, MEstimator(TukeyLoss()))
 ```
 """
 struct LinearRobustProblem{M<:AbstractMatrix, V<:AbstractVector} <: AbstractRobustProblem
@@ -75,11 +76,72 @@ data_size(prob::LinearRobustProblem) = size(prob.A, 1)
 problem_dof(prob::LinearRobustProblem) = size(prob.A, 2)
 
 # -----------------------------------------------------------------------------
+# MEstimatorMethod — IRLS framework specialization
+# -----------------------------------------------------------------------------
+
+struct MEstimatorMethod{L,S} <: AbstractIRLSMethod
+    loss::L
+    scale_est::S
+    rtol::Float64
+    n::Int
+    dof::Int
+end
+
+struct MEstimatorState{T}
+    r::Vector{T}
+    w::Vector{T}
+    σ::Base.RefValue{T}
+end
+
+function init_state(method::MEstimatorMethod, prob, θ₀)
+    r = method.n > 0 ? Vector{Float64}(undef, method.n) : Float64[]
+    w = ones(Float64, method.n)
+    σ = Ref(0.0)
+    compute_residuals!(r, prob, θ₀)
+    σ[] = _corrected_scale(method.scale_est, r, method.n, method.dof)
+    @inbounds for i in 1:method.n
+        w[i] = weight(method.loss, r[i] / σ[])
+    end
+    MEstimatorState(r, w, σ)
+end
+
+function solve_step(state::MEstimatorState, method::MEstimatorMethod, prob, θ)
+    weighted_solve(prob, θ, state.w)
+end
+
+function update_residuals!(state::MEstimatorState, method::MEstimatorMethod, prob, θ)
+    compute_residuals!(state.r, prob, θ)
+end
+
+function update_scale!(state::MEstimatorState, method::MEstimatorMethod, prob)
+    state.σ[] = _corrected_scale(method.scale_est, state.r, method.n, method.dof)
+end
+
+function update_weights!(state::MEstimatorState, method::MEstimatorMethod, prob)
+    σ = state.σ[]
+    @inbounds for i in 1:method.n
+        state.w[i] = weight(method.loss, state.r[i] / σ)
+    end
+end
+
+function is_converged(state::MEstimatorState, method::MEstimatorMethod, prob, θ, θ_old, iter)
+    convergence_metric(prob, θ, θ_old) < method.rtol
+end
+
+function irls_result(state::MEstimatorState, method::MEstimatorMethod, prob, θ, converged, final_iter)
+    # Compute final residuals and scale
+    compute_residuals!(state.r, prob, θ)
+    σ = _corrected_scale(method.scale_est, state.r, method.n, method.dof)
+    stop = converged ? :converged : :max_iterations
+    Attributed(θ, RobustAttributes(stop, copy(state.r), copy(state.w), σ, final_iter))
+end
+
+# -----------------------------------------------------------------------------
 # Generic IRLS Solver
 # -----------------------------------------------------------------------------
 
 """
-    robust_solve(prob::AbstractRobustProblem, estimator::MEstimator; kwargs...)
+    fit(prob::AbstractRobustProblem, estimator::MEstimator; kwargs...)
 
 Solve a robust estimation problem using IRLS.
 
@@ -94,7 +156,7 @@ Solve a robust estimation problem using IRLS.
 - `rtol::Float64=1e-6`: Convergence tolerance
 - `refine::Union{Nothing,AbstractRobustProblem}=nothing`: Optional second problem
   for two-phase estimation (e.g., Taubin → FNS). After IRLS converges on `prob`,
-  automatically chains into `robust_solve(refine, ...; init=θ)`.
+  automatically chains into `fit(refine, ...; init=θ)`.
 - `refine_max_iter::Int=30`: Maximum iterations for the refinement phase
 
 # Returns
@@ -105,14 +167,14 @@ Access via property forwarding: `result.value`, `result.residuals`,
 # Example
 ```julia
 # Single-phase
-result = robust_solve(prob, MEstimator(GemanMcClureLoss()))
+result = fit(prob, MEstimator(GemanMcClureLoss()))
 
 # Two-phase: robust Taubin → robust FNS
-result = robust_solve(taubin_prob, MEstimator(GemanMcClureLoss());
+result = fit(taubin_prob, MEstimator(GemanMcClureLoss());
                       refine=fns_prob, max_iter=20, refine_max_iter=30)
 ```
 """
-function robust_solve(prob::AbstractRobustProblem, estimator::MEstimator;
+function fit(prob::AbstractRobustProblem, estimator::MEstimator;
                       scale::AbstractScaleEstimator=MADScale(),
                       init=nothing,
                       max_iter::Int=50,
@@ -122,44 +184,14 @@ function robust_solve(prob::AbstractRobustProblem, estimator::MEstimator;
                       workspace::Union{Nothing, IRLSWorkspace}=nothing)
     n = data_size(prob)
     dof = problem_dof(prob)
-    loss = estimator.loss
+    θ₀ = init === nothing ? initial_solve(prob) : init
 
-    ws = something(workspace, IRLSWorkspace(n))
-    r = ws.residuals
-    ω = ws.weights
-    fill!(ω, one(eltype(ω)))
-
-    θ = init === nothing ? initial_solve(prob) : init
-    local σ::Float64
-    stop = :max_iterations
-    final_iter = max_iter
-
-    for iter in 1:max_iter
-        θ_old = θ
-
-        compute_residuals!(r, prob, θ)
-        σ = _corrected_scale(scale, r, n, dof)
-
-        @inbounds for i in 1:n
-            ω[i] = weight(loss, r[i] / σ)
-        end
-
-        θ = weighted_solve(prob, θ, ω)
-
-        if convergence_metric(prob, θ, θ_old) < rtol
-            stop = :converged
-            final_iter = iter
-            break
-        end
-    end
-
-    compute_residuals!(r, prob, θ)
-    σ = _corrected_scale(scale, r, n, dof)
-    result = Attributed(θ, RobustAttributes(stop, copy(r), copy(ω), σ, final_iter))
+    method = MEstimatorMethod(estimator.loss, scale, rtol, n, dof)
+    result = irls!(method, prob, θ₀; max_iter)
 
     # Optional refinement phase (e.g., Taubin → FNS)
     if refine !== nothing
-        r2 = robust_solve(refine, estimator; scale, init=result.value,
+        r2 = fit(refine, estimator; scale, init=result.value,
                           max_iter=refine_max_iter, rtol, workspace)
         total = result.iterations + r2.iterations
         return Attributed(r2.value, RobustAttributes(r2.stop_reason, r2.residuals,
@@ -169,5 +201,5 @@ function robust_solve(prob::AbstractRobustProblem, estimator::MEstimator;
 end
 
 # Convenience wrapper for (A, b)
-robust_solve(A::AbstractMatrix, b::AbstractVector, est::MEstimator; kwargs...) =
-    robust_solve(LinearRobustProblem(A, b), est; kwargs...)
+fit(A::AbstractMatrix, b::AbstractVector, est::MEstimator; kwargs...) =
+    fit(LinearRobustProblem(A, b), est; kwargs...)

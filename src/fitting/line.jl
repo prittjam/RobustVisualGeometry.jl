@@ -40,6 +40,38 @@ struct LineFitResult{T}
 end
 
 # =============================================================================
+# Weighted centroid + scatter helper
+# =============================================================================
+
+"""
+    _centroid_and_scatter(get_xy, weights, n) -> (wmx, wmy, M)
+
+Compute weighted centroid `(wmx, wmy)` and 2×2 scatter matrix `M` around
+the centroid. `get_xy(i)` returns `(x, y)` for point i. `weights[i]` is
+the weight for point i. Returns the Symmetric scatter matrix.
+"""
+function _centroid_and_scatter(get_xy::F, weights::AbstractVector{T},
+                                n::Int) where {F,T}
+    W = zero(T); wmx = zero(T); wmy = zero(T)
+    @inbounds for i in 1:n
+        x, y = get_xy(i)
+        w = weights[i]
+        W += w; wmx += w * x; wmy += w * y
+    end
+    wmx /= W; wmy /= W
+
+    m11 = zero(T); m12 = zero(T); m22 = zero(T)
+    @inbounds for i in 1:n
+        x, y = get_xy(i)
+        w = weights[i]
+        dx = x - wmx; dy = y - wmy
+        m11 += w*dx*dx; m12 += w*dx*dy; m22 += w*dy*dy
+    end
+    M = Symmetric(SMatrix{2,2,T}(m11, m12, m12, m22))
+    (wmx, wmy, M)
+end
+
+# =============================================================================
 # Unweighted fit_line
 # =============================================================================
 
@@ -60,33 +92,14 @@ function fit_line(points::AbstractVector{<:Point2})
 
     T = float(eltype(eltype(points)))
 
-    # Centroid
-    mx = zero(T)
-    my = zero(T)
-    @inbounds for p in points
-        mx += T(p[1])
-        my += T(p[2])
-    end
-    mx /= n
-    my /= n
-
-    # Scatter matrix M = Σ(pᵢ - p̄)(pᵢ - p̄)⊤
-    m11 = zero(T)
-    m12 = zero(T)
-    m22 = zero(T)
-    @inbounds for p in points
-        dx = T(p[1]) - mx
-        dy = T(p[2]) - my
-        m11 += dx * dx
-        m12 += dx * dy
-        m22 += dy * dy
-    end
-    M = Symmetric(SMatrix{2,2,T}(m11, m12, m12, m22))
+    unit_w = ones(T, n)
+    get_xy = @inline i -> (T(points[i][1]), T(points[i][2]))
+    mx, my, M = _centroid_and_scatter(get_xy, unit_w, n)
 
     # Eigenvector for smallest eigenvalue → normal direction
     E = eigen(M)
-    idx = argmin(E.values)
-    nv = SVector{2,T}(E.vectors[:, idx])
+    eidx = argmin(E.values)
+    nv = SVector{2,T}(E.vectors[:, eidx])
 
     # d = -n⊤p̄
     d = -(nv[1] * mx + nv[2] * my)
@@ -140,32 +153,14 @@ function fit_line(points::AbstractVector{<:Uncertain{<:Point2}})
 
     T = float(eltype(param_cov(points[1])))
 
-    # --- Step 1: Initial unweighted TLS for direction ---
-    mx = zero(T)
-    my = zero(T)
-    @inbounds for u in points
-        p = u.value
-        mx += T(p[1])
-        my += T(p[2])
-    end
-    mx /= n
-    my /= n
+    get_xy = @inline i -> (T(points[i].value[1]), T(points[i].value[2]))
 
-    m11 = zero(T)
-    m12 = zero(T)
-    m22 = zero(T)
-    @inbounds for u in points
-        p = u.value
-        dx = T(p[1]) - mx
-        dy = T(p[2]) - my
-        m11 += dx * dx
-        m12 += dx * dy
-        m22 += dy * dy
-    end
-    M = Symmetric(SMatrix{2,2,T}(m11, m12, m12, m22))
+    # --- Step 1: Initial unweighted TLS for direction ---
+    unit_w = ones(T, n)
+    _, _, M = _centroid_and_scatter(get_xy, unit_w, n)
     E = eigen(M)
-    idx = argmin(E.values)
-    nv = SVector{2,T}(E.vectors[:, idx])
+    eidx = argmin(E.values)
+    nv = SVector{2,T}(E.vectors[:, eidx])
 
     # --- Step 2: Weighted scatter with initial direction ---
     # Compute weights from projected variances σᵢ² = n⊤Σᵢn
@@ -176,37 +171,11 @@ function fit_line(points::AbstractVector{<:Uncertain{<:Point2}})
         ws[i] = inv(max(σ², eps(T)))
     end
 
-    # Weighted centroid
-    W = zero(T)
-    wmx = zero(T)
-    wmy = zero(T)
-    @inbounds for i in 1:n
-        p = points[i].value
-        w = ws[i]
-        W += w
-        wmx += w * T(p[1])
-        wmy += w * T(p[2])
-    end
-    wmx /= W
-    wmy /= W
-
-    # Weighted scatter → refined normal
-    m11 = zero(T)
-    m12 = zero(T)
-    m22 = zero(T)
-    @inbounds for i in 1:n
-        p = points[i].value
-        w = ws[i]
-        dx = T(p[1]) - wmx
-        dy = T(p[2]) - wmy
-        m11 += w * dx * dx
-        m12 += w * dx * dy
-        m22 += w * dy * dy
-    end
-    M = Symmetric(SMatrix{2,2,T}(m11, m12, m12, m22))
+    # Weighted centroid + scatter → refined normal
+    _, _, M = _centroid_and_scatter(get_xy, ws, n)
     E = eigen(M)
-    idx = argmin(E.values)
-    nv = SVector{2,T}(E.vectors[:, idx])
+    eidx = argmin(E.values)
+    nv = SVector{2,T}(E.vectors[:, eidx])
 
     # --- Step 3: Recompute weights with refined normal ---
     @inbounds for i in 1:n

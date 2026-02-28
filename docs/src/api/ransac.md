@@ -27,7 +27,6 @@ test_consensus
 fit
 solver_cardinality
 draw_sample!
-measurement_covariance
 residual_jacobian
 measurement_logdets!
 solver_jacobian
@@ -56,19 +55,8 @@ RansacAttributes
 SolverCardinality
 SingleSolution
 MultipleSolutions
-ConstraintType
-Constrained
-Unconstrained
-constraint_type
-inlier_ratio
-```
-
-## Fit Strategy Trait
-
-```@docs
-FitStrategy
 LinearFit
-fit_strategy
+inlier_ratio
 ```
 
 ## Workspace

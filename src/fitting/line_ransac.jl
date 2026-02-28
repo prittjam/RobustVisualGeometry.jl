@@ -4,36 +4,36 @@
 
 """
     fit_line_ransac(points::AbstractVector{<:Uncertain{<:Point2}};
-        quality=nothing, config=RansacConfig(), outlier_halfwidth=50.0)
+        scoring=nothing, config=RansacConfig(), outlier_halfwidth=50.0)
 
 Robust line fitting via RANSAC with scale-free marginal scoring.
 
 Returns a `RansacEstimate`.
 
 # Arguments
-- `quality`: Quality function for model selection.
-  Default: `MarginalQuality(problem, outlier_halfwidth)`.
+- `scoring`: Quality function for model selection.
+  Default: `MarginalScoring(problem, outlier_halfwidth)`.
 - `config`: RANSAC loop configuration.
 - `outlier_halfwidth`: Half-width of the outlier domain (parameter `a` in Eq. 12).
-  Only used when `quality` is not provided.
+  Only used when `scoring` is not provided.
 
 # Examples
 ```julia
 result = fit_line_ransac(points)
 
-# Custom quality
-quality = PredictiveMarginalQuality(length(points), 2, 30.0; codimension=1)
-result = fit_line_ransac(points; quality)
+# Custom scoring
+scoring = PredictiveMarginalScoring(length(points), 2, 30.0; codimension=1)
+result = fit_line_ransac(points; scoring)
 ```
 """
 function fit_line_ransac(
     points::AbstractVector{<:Uncertain{<:Point2}};
-    quality::Union{AbstractQualityFunction, Nothing} = nothing,
+    scoring::Union{AbstractScoring, Nothing} = nothing,
     config::RansacConfig = RansacConfig(),
     outlier_halfwidth::Real = 50.0,
 )
     problem = LineFittingProblem(points)
-    scoring = something(quality, MarginalQuality(problem, Float64(outlier_halfwidth)))
+    scoring = something(scoring, MarginalScoring(problem, Float64(outlier_halfwidth)))
     ransac(problem, scoring; config)
 end
 

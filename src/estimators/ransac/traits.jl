@@ -1,5 +1,5 @@
 # =============================================================================
-# RANSAC Traits — SolverCardinality, ConstraintType
+# RANSAC Traits — SolverCardinality
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -35,71 +35,14 @@ The RANSAC loop iterates over all candidates and keeps the best.
 struct MultipleSolutions <: SolverCardinality end
 
 # -----------------------------------------------------------------------------
-# Holy Trait: Linear System Type
-# -----------------------------------------------------------------------------
-#
-# Distinguishes null-space problems (Ah = 0, SVD) from overdetermined
-# linear systems (Ax ≈ b, weighted LS). Enables trait-dispatched solve
-# in the generic IRLS loop.
-#
-
-"""
-    ConstraintType
-
-Holy Trait for the constraint structure of a RANSAC problem's parameterization.
-
-- `Constrained()`: Model has a gauge constraint h(θ)=0 (e.g., ‖h‖=1).
-  Produces a null-space problem `Ah = 0`, solved via SVD.
-  Covariance requires the bordered Hessian / implicit function theorem.
-- `Unconstrained()`: Model uses minimal (free) coordinates.
-  Produces an overdetermined system `Ax ≈ b`, solved via weighted LS.
-  Covariance is σ²(X'X)⁻¹.
-"""
-abstract type ConstraintType end
-
-"""
-    Constrained <: ConstraintType
-
-Model parameterization has a gauge constraint h(θ)=0 (e.g., ‖h‖=1 for
-homography, fundamental matrix). The IRLS refinement solves the null-space
-problem `Ah = 0` via SVD, and the covariance is computed by projecting
-I⁻¹ onto the tangent plane of the constraint manifold via the bordered
-Hessian from the Lagrangian formulation.
-"""
-struct Constrained <: ConstraintType end
-
-"""
-    Unconstrained <: ConstraintType
-
-Model parameterization uses minimal (free) coordinates with no constraint.
-The IRLS refinement solves `Ax ≈ b` via normal equations, and the
-covariance is σ²·inv(I) where I is the Fisher information.
-"""
-struct Unconstrained <: ConstraintType end
-
-# -----------------------------------------------------------------------------
-# Holy Trait: Fit Strategy — Dispatch axis for LO-RANSAC refit solver
+# LinearFit — Concrete type for LO-RANSAC refit solver dispatch
 # -----------------------------------------------------------------------------
 
 """
-    FitStrategy
+    LinearFit
 
-Holy Trait for the solver used by `fit(problem, mask, weights, strategy)` during
-local optimization. Allows multiple LO types to share a solver via a common
-trait value.
-
-Built-in strategies:
-- `LinearFit()`: linear algebraic refit (DLT via SVD null-space, or GEP/EIV)
-
-See also: [`LinearFit`](@ref), [`fit_strategy`](@ref)
+Concrete type for the solver used by `fit(problem, mask, weights, ::LinearFit)`
+during local optimization. Covers null-space DLT (Ah=0 via SVD) for
+correspondence problems and GEP/EIV solvers for line fitting.
 """
-abstract type FitStrategy end
-
-"""
-    LinearFit <: FitStrategy
-
-Linear algebraic refit: covers null-space DLT (Ah=0 via SVD) for correspondence
-problems and GEP/EIV solvers for line fitting. Used by `ConvergeThenRescore`
-and `StepAndRescore`.
-"""
-struct LinearFit <: FitStrategy end
+struct LinearFit end

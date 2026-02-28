@@ -25,7 +25,7 @@ end
 Robust Taubin: IRLS-weighted generalized eigenvalue problem using Taubin's
 gradient-weighted scatter matrices.
 
-Uses the generic `robust_solve` with `ConicTaubinProblem`.
+Uses the generic `fit` with `ConicTaubinProblem`.
 
 # Arguments
 - `points`: 2×N matrix, N×2 matrix, or Vector of 2D points
@@ -41,6 +41,6 @@ function fit_conic_robust_taubin(points; sigma::Real=1.0, loss::AbstractLoss=Tuk
                                  max_iter::Int=50, rtol::Float64=1e-5)
     pts, norm_pts, T, sigma_norm = _prepare_and_normalize(points, sigma)
     prob = ConicTaubinProblem(norm_pts, sigma_norm)
-    result = robust_solve(prob, MEstimator(loss); scale=_scale_estimator(scale), max_iter, rtol)
+    result = fit(prob, MEstimator(loss); scale=_scale_estimator(scale), max_iter, rtol)
     _finalize_conic_result(result, T, pts, sigma)
 end

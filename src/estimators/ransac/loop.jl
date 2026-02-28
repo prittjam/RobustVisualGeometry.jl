@@ -14,7 +14,7 @@
 # =============================================================================
 
 # =============================================================================
-# Unified RANSAC Main Loop (quality-agnostic via _quality_improved trait)
+# Unified RANSAC Main Loop (scoring-agnostic via _score_improved trait)
 # =============================================================================
 
 """
@@ -30,8 +30,8 @@ count uses the hypergeometric distribution (Appendix A, stopping criterion).
 
 # Arguments
 - `problem::AbstractRansacProblem`: Problem definition (data, solver, residuals)
-- `scoring::AbstractQualityFunction`: `MarginalQuality` (Eq. 12) or
-  `PredictiveMarginalQuality` (Eq. 20)
+- `scoring::AbstractScoring`: `MarginalScoring` (Eq. 12) or
+  `PredictiveMarginalScoring` (Eq. 20)
 
 # Keyword Arguments
 - `config::RansacConfig=RansacConfig()`: max_trials, confidence η, min_trials
@@ -40,14 +40,14 @@ count uses the hypergeometric distribution (Appendix A, stopping criterion).
 # Examples
 ```julia
 # Model-certain score (Section 3, Eq. 12)
-result = ransac(problem, MarginalQuality(N, m, a))
+result = ransac(problem, MarginalScoring(N, m, a))
 
 # Predictive score with leverages (Section 4, Eq. 20)
-result = ransac(problem, PredictiveMarginalQuality(N, m, a))
+result = ransac(problem, PredictiveMarginalScoring(N, m, a))
 ```
 """
 function ransac(problem::AbstractRansacProblem,
-                scoring::AbstractQualityFunction;
+                scoring::AbstractScoring;
                 local_optimization::AbstractLocalOptimization = default_local_optimization(scoring),
                 config::RansacConfig = RansacConfig(),
                 workspace::Union{Nothing, RansacWorkspace} = nothing)
@@ -59,7 +59,7 @@ function ransac(problem::AbstractRansacProblem,
 
     ws = something(workspace, RansacWorkspace(n, k, M, T))
 
-    best = init_quality(scoring)
+    best = init_score(scoring)
     needed = config.max_trials
     trial = 0
     effective = 0
@@ -77,7 +77,7 @@ function ransac(problem::AbstractRansacProblem,
         best = _score_candidates!(ws, problem, scoring, local_optimization, best,
                                    solver_cardinality(problem))
 
-        if _quality_improved(scoring, best, old_best) && ws.has_best
+        if _score_improved(scoring, best, old_best) && ws.has_best
             needed = _adaptive_trials(ws.best_mask, k, config)
         end
     end
@@ -104,7 +104,7 @@ end
 # _score_candidates! — single method for all solver cardinalities
 # =============================================================================
 
-function _score_candidates!(ws, problem, scoring::AbstractMarginalQuality,
+function _score_candidates!(ws, problem, scoring::MarginalScoring,
                             local_optimization, best::Tuple{T,T},
                             cardinality::SolverCardinality) where T
     solutions = _solve_models(problem, ws.sample_indices, cardinality)
@@ -141,95 +141,62 @@ end
 
 Algorithm 2, lines 6-14: two-level gating with S_gl and S_lo.
 
-Phase 1 (lines 6-8): compute per-point scores qᵢ and penalties ℓᵢ via
-trait-dispatched `score!`, call `sweep!` (Algorithm 1) to find
-optimal partition I*, gate on S* > S_gl.
+Phase 1 (lines 6-8): wrap model with covariance (Uncertain{M} for PredMQ),
+compute per-point scores qᵢ via type-dispatched `score!`, call `sweep!`
+(Algorithm 1) to find optimal partition I*, gate on S* > S_gl.
 
 Phase 2 (line 10): local optimization refit (Algorithms 3/4).
 
-Phase 3 (lines 11-13): re-score refined model (always model-certain:
-qᵢ = rᵢ², ℓᵢ = log|Cᵢ|), gate on S_lo.
-
-The three covariance cases (Section 9) are handled by `score!`:
-- Homoscedastic:   qᵢ = rᵢ²,       ℓᵢ = 0
-- Heteroscedastic: qᵢ = rᵢᵀCᵢ⁻¹rᵢ, ℓᵢ = log|Cᵢ|
-- Predictive:      qᵢ = rᵢᵀVᵢ⁻¹rᵢ, ℓᵢ = log|Cᵢ| + log|V_wᵢ|
+Phase 3 (lines 11-13): wrap refined model with fit covariance, re-score,
+gate on S_lo. Model covariance dispatch:
+- Plain model M → model-certain scoring
+- Uncertain{M} → model-uncertain scoring (reads model.param_cov)
 """
 function _try_model!(ws::RansacWorkspace{<:Any,M,T}, problem,
-                     scoring::AbstractMarginalQuality, local_optimization,
+                     scoring::MarginalScoring, local_optimization,
                      model::M, best_g::T, best_l::T) where {M,T}
-    n = data_size(problem)
-    cov = covariance_structure(problem, scoring)
-
-    # Phase 1: per-point scores + penalties (trait-dispatched)
-    score!(ws, problem, scoring, model, cov)
-
-    score_g, k_star = sweep!(scoring, ws.scores, ws.penalties, n)
+    # Phase 1: wrap with model covariance, score + sweep + mask
+    model_scored = _with_model_cov(scoring, problem, model, ws.sample_indices)
+    score_g, k_star = _score_and_sweep!(ws, problem, scoring, model_scored)
     (k_star <= scoring.model_dof || score_g <= best_g) && return (best_g, best_l)
 
-    mask!(ws, scoring.perm, k_star)
     test_consensus(problem, model, ws.mask) || return (best_g, best_l)
 
-    # Phase 2: Local optimization
-    lo = _locally_optimize!(ws, problem, model, local_optimization, scoring)
+    # Phase 2: Local optimization (returns plain M)
+    lo_model = _locally_optimize!(ws, problem, model, local_optimization, scoring)
 
-    # Phase 3: Re-score refined model (always model-certain)
-    score_l, _ = _rescore_model_certain!(ws, problem, scoring, lo.model)
+    # Phase 3: wrap with fit covariance, re-score refined model
+    lo_scored = _with_fit_cov(scoring, problem, lo_model)
+    score_l, _ = _score_and_sweep!(ws, problem, scoring, lo_scored)
     score_l <= best_l && return (best_g, best_l)
 
-    _update_best!(ws, lo.model)
+    _update_best!(ws, lo_model)
     return (score_g, score_l)
 end
 
 # =============================================================================
-# _rescore_model_certain! — Re-score with model-certain (Σ_θ = 0) scoring
+# _score_and_sweep! — Single scoring path for all phases
 # =============================================================================
 #
-# Phase 3 (re-scoring after LO) is always "model certain" (Σ_θ = 0).
-# Dispatches on measurement_covariance(problem) to compute qᵢ and ℓᵢ:
-#   Homoscedastic   → residuals! + rᵢ², ℓᵢ = 0
-#   Heteroscedastic → residual_jacobian + _sq_norm(rᵢ), ℓᵢ = log|Σ̃_{gᵢ}|
-#
-# Mirrors score!(... ::Homoscedastic) and score!(... ::Heteroscedastic)
-# from scoring.jl, but without the Predictive path.
+# Every score computation in the RANSAC loop goes through this function:
+# Phase 1 (initial), Phase 2 (LO iterations), Phase 3 (final re-score),
+# and _finalize. Using a single path preserves monotonicity — scores
+# from different phases are always comparable.
 # =============================================================================
 
 """
-    _rescore_model_certain!(ws, problem, scoring, model) -> (score, k)
+    _score_and_sweep!(ws, problem, scoring, model) -> (score, k)
 
-Re-score a model with model-certain (Σ_θ = 0) scoring (Section 3.3).
-Dispatches on `measurement_covariance(problem)` for both qᵢ and ℓᵢ.
-
-Used by `_try_model!` (Phase 3), `_locally_optimize!`, and `_finalize`.
+Score a model: compute per-point scores via `score!` (type-dispatched
+on plain M vs Uncertain{M}), find the optimal partition via `sweep!`,
+and set the inlier mask via `mask!`.  Returns the score and inlier count.
 """
-_rescore_model_certain!(ws, problem, scoring, model) =
-    _rescore_model_certain!(ws, problem, scoring, model, measurement_covariance(problem))
-
-# Homoscedastic: qᵢ = rᵢ², ℓᵢ = 0 (fast path)
-function _rescore_model_certain!(ws, problem, scoring, model, ::Homoscedastic)
-    residuals!(ws.residuals, problem, model)
-    n = length(ws.residuals)
-    @inbounds for i in 1:n
-        ws.scores[i] = ws.residuals[i]^2
-    end
-    fill!(ws.penalties, zero(eltype(ws.penalties)))
-    score, k = sweep!(scoring, ws.scores, ws.penalties, n)
-    mask!(ws, scoring.perm, k)
-    (score, k)
-end
-
-# Heteroscedastic: qᵢ = rᵢᵀrᵢ via residual_jacobian, ℓᵢ = log|Σ̃_{gᵢ}|
-function _rescore_model_certain!(ws, problem, scoring, model, ::Heteroscedastic)
+function _score_and_sweep!(ws, problem, scoring, model)
     n = data_size(problem)
-    @inbounds for i in 1:n
-        rᵢ, _, ℓᵢ = residual_jacobian(problem, model, i)
-        ws.scores[i] = _sq_norm(rᵢ)
-        ws.residuals[i] = sqrt(ws.scores[i])
-        ws.penalties[i] = ℓᵢ
-    end
-    score, k = sweep!(scoring, ws.scores, ws.penalties, n)
+    score!(ws, problem, scoring, model)
+    s, k = sweep!(scoring, ws.scores, ws.penalties, n)
     mask!(ws, scoring.perm, k)
-    (score, k)
+    (s, k)
 end
 
 # =============================================================================
@@ -237,96 +204,104 @@ end
 # =============================================================================
 
 """
-    _locally_optimize!(ws, problem, model, ::NoLocalOptimization, scoring) -> (; model, param_cov)
+    _locally_optimize!(ws, problem, model, ::NoLocalOptimization, scoring) -> M
 
 No-op: returns model unchanged.
 """
 function _locally_optimize!(ws::RansacWorkspace{<:Any,M,T}, problem, model::M,
                      ::NoLocalOptimization, scoring) where {M,T}
-    return (; model, param_cov=nothing)
+    return model
+end
+
+# =============================================================================
+# PosteriorIrls — Posterior-weight IRLS via generic irls! loop
+# =============================================================================
+
+struct PosteriorIrlsMethod{S<:MarginalScoring,K,M,T} <: AbstractIRLSMethod
+    scoring::S
+    ws::RansacWorkspace{K,M,T}
+    strat::LinearFit
+end
+
+mutable struct PosteriorIrlsState{M,T}
+    w::Vector{T}
+    best_model::M
+    best_score::T
+    current_score::T
+end
+
+function init_state(method::PosteriorIrlsMethod{S,K,M,T}, problem, θ₀) where {S,K,M,T}
+    ws = method.ws
+    scoring = method.scoring
+    n = data_size(problem)
+
+    # Score + sweep the initial model
+    θ_scored = _with_fit_cov(scoring, problem, θ₀)
+    score, k = _score_and_sweep!(ws, problem, scoring, θ_scored)
+
+    # Compute posterior weights from the sweep partition
+    w = Vector{T}(undef, n)
+    _posterior_weights!(w, ws.scores, scoring.perm, k, scoring.codimension, scoring.log2a)
+
+    PosteriorIrlsState{M,T}(w, θ₀, score, score)
+end
+
+function solve_step(state::PosteriorIrlsState, method::PosteriorIrlsMethod, problem, θ)
+    ws = method.ws
+    # Build mask from weights (w > 0.5 → inlier)
+    n = length(state.w)
+    @inbounds for i in 1:n
+        ws.mask[i] = state.w[i] > 0.5
+    end
+    fit(problem, ws.mask, state.w, method.strat)
+end
+
+function update_residuals!(state::PosteriorIrlsState, method::PosteriorIrlsMethod, problem, θ)
+    ws = method.ws
+    scoring = method.scoring
+    θ_scored = _with_fit_cov(scoring, problem, θ)
+    score, k = _score_and_sweep!(ws, problem, scoring, θ_scored)
+    state.current_score = score
+    nothing
+end
+
+function update_scale!(state::PosteriorIrlsState, method::PosteriorIrlsMethod, prob)
+    nothing  # scale is implicit in sweep
+end
+
+function update_weights!(state::PosteriorIrlsState{M,T}, method::PosteriorIrlsMethod, prob) where {M,T}
+    ws = method.ws
+    scoring = method.scoring
+    k = sum(ws.mask)
+    _posterior_weights!(state.w, ws.scores, scoring.perm, k, scoring.codimension, scoring.log2a)
+end
+
+function post_step!(state::PosteriorIrlsState, method::PosteriorIrlsMethod, prob, θ, iter)
+    if state.current_score > state.best_score
+        state.best_score = state.current_score
+        state.best_model = θ
+    end
+end
+
+function is_converged(state::PosteriorIrlsState, method::PosteriorIrlsMethod, prob, θ, θ_old, iter)
+    state.current_score <= state.best_score && iter > 1
+end
+
+function irls_result(state::PosteriorIrlsState{M,T}, method::PosteriorIrlsMethod, prob, θ, converged, final_iter) where {M,T}
+    state.best_model
 end
 
 """
-    _locally_optimize!(ws, problem, model, lo::ConvergeThenRescore, scoring)
+    _locally_optimize!(ws, problem, model, lo::PosteriorIrls, scoring) -> M
 
-Strategy A (Algorithm 3): WLS to convergence at fixed mask, then re-sweep.
-Repeat until score does not improve.
+Strategy C: Posterior-weight IRLS refinement. Computes posterior inlier
+probabilities, uses them as soft weights for WLS, re-scores, and iterates
+via the generic `irls!` loop.
 """
-function _locally_optimize!(ws::RansacWorkspace{<:Any,M,T}, problem, model::M,
-                     lo::ConvergeThenRescore, scoring) where {M,T}
-    n = data_size(problem)
-    best_model = model
-    best_score = typemin(T)
-    strat = fit_strategy(lo)
-
-    w = ws.penalties  # reuse penalties buffer as weight scratch
-    @inbounds for i in 1:n
-        w[i] = ws.mask[i] ? one(T) : zero(T)
-    end
-
-    θ = model
-    for outer in 1:lo.max_outer_iter
-        # Step 1: Refit — WLS to convergence at fixed mask
-        for _ in 1:lo.max_fit_iter
-            θ_new = fit(problem, ws.mask, w, strat)
-            isnothing(θ_new) && break
-            θ_new == θ && break
-            θ = θ_new
-        end
-
-        # Step 2: Re-score and re-sweep
-        score_new, k = _rescore_model_certain!(ws, problem, scoring, θ)
-
-        score_new <= best_score && break
-        best_score = score_new
-        best_model = θ
-        mask!(ws, scoring.perm, k)
-
-        @inbounds for i in 1:n
-            w[i] = ws.mask[i] ? one(T) : zero(T)
-        end
-    end
-
-    return (; model=best_model, param_cov=nothing)
-end
-
-"""
-    _locally_optimize!(ws, problem, model, lo::StepAndRescore, scoring)
-
-Strategy B (Algorithm 4): Single WLS step, then re-sweep. Repeat until
-score does not improve.
-"""
-function _locally_optimize!(ws::RansacWorkspace{<:Any,M,T}, problem, model::M,
-                     lo::StepAndRescore, scoring) where {M,T}
-    n = data_size(problem)
-    best_model = model
-    best_score = typemin(T)
-    strat = fit_strategy(lo)
-
-    w = ws.penalties
-    @inbounds for i in 1:n
-        w[i] = ws.mask[i] ? one(T) : zero(T)
-    end
-
-    θ = model
-    for outer in 1:lo.max_outer_iter
-        θ_new = fit(problem, ws.mask, w, strat)
-        isnothing(θ_new) && break
-        θ = θ_new
-
-        score_new, k = _rescore_model_certain!(ws, problem, scoring, θ)
-
-        score_new <= best_score && break
-        best_score = score_new
-        best_model = θ
-        mask!(ws, scoring.perm, k)
-
-        @inbounds for i in 1:n
-            w[i] = ws.mask[i] ? one(T) : zero(T)
-        end
-    end
-
-    return (; model=best_model, param_cov=nothing)
+function _locally_optimize!(ws::RansacWorkspace{K,M,T}, problem, model::M,
+                     lo::PosteriorIrls, scoring::MarginalScoring) where {K,M,T}
+    method = PosteriorIrlsMethod(scoring, ws, LinearFit())
+    irls!(method, problem, model; max_iter=lo.max_outer_iter)
 end
 
 # =============================================================================
@@ -334,16 +309,26 @@ end
 # =============================================================================
 
 """
-    _inlier_scale_and_weights(residuals, mask, model_dof) -> (scale, dof, weights)
+    _inlier_scale_and_weights(residuals, mask, model_dof, d_g) -> (scale, dof, weights)
 
 Compute inlier scale (sqrt(RSS/ν)), degrees of freedom, and binary weight
 vector from residuals and inlier mask.
+
+Each inlier contributes `d_g` scalar constraint equations, so RSS is a sum of
+`n_in * d_g` squared terms. The degrees of freedom are `ν = n_in * d_g - n_θ`
+where `n_θ = model_dof * d_g`.
+
+Note: this uses the *unbiased* estimator RSS/ν (dividing by n-p) for the
+user-facing scale output, unlike `_posterior_weights!` which uses the MLE
+RSS/(n·d_g) for internal posterior computation (the mode of the inverse-gamma
+posterior under the Jeffreys prior).
 """
 function _inlier_scale_and_weights(residuals::AbstractVector{T},
-                                    mask::BitVector, model_dof::Int) where T
+                                    mask::BitVector, model_dof::Int,
+                                    d_g::Int) where T
     n = length(residuals)
     n_in = sum(mask)
-    nu = n_in - model_dof
+    nu = d_g * (n_in - model_dof)
     RSS = zero(T)
     @inbounds for i in 1:n
         mask[i] && (RSS += residuals[i]^2)
@@ -359,10 +344,10 @@ function _inlier_scale_and_weights(residuals::AbstractVector{T},
 end
 
 # =============================================================================
-# _finalize — AbstractMarginalQuality
+# _finalize — MarginalScoring
 # =============================================================================
 
-function _finalize(scoring::AbstractMarginalQuality,
+function _finalize(scoring::MarginalScoring,
                    local_optimization::AbstractLocalOptimization,
                    ws, problem, best::Tuple, sar, trial)
     n = data_size(problem)
@@ -390,19 +375,21 @@ function _finalize(scoring::AbstractMarginalQuality,
     copyto!(ws.residuals, ws.best_residuals)
     copyto!(ws.mask, ws.best_mask)
 
-    lo = _locally_optimize!(ws, problem, model, local_optimization, scoring)
+    lo_model = _locally_optimize!(ws, problem, model, local_optimization, scoring)
 
     # Re-score to check if local optimization improved
-    score_final, _ = _rescore_model_certain!(ws, problem, scoring, lo.model)
+    lo_scored = _with_fit_cov(scoring, problem, lo_model)
+    score_final, _ = _score_and_sweep!(ws, problem, scoring, lo_scored)
 
     if score_final >= best_score
-        model = lo.model
+        model = lo_model
     else
         # Restore residuals/mask for the original best model
-        _rescore_model_certain!(ws, problem, scoring, model)
+        _score_and_sweep!(ws, problem, scoring, model)
     end
 
-    s, nu, w = _inlier_scale_and_weights(ws.residuals, ws.mask, p)
+    d_g = scoring.codimension
+    s, nu, w = _inlier_scale_and_weights(ws.residuals, ws.mask, p, d_g)
 
     base_attrs = RansacAttributes(:converged;
         inlier_mask = copy(ws.mask),

@@ -33,7 +33,7 @@ abstract type AbstractEstimator end
 Abstract type for robust estimation problems.
 
 A concrete subtype encapsulates the data, solver mechanics, and residual
-computation for a specific estimation task. The generic `robust_solve`
+computation for a specific estimation task. The generic `fit`
 dispatches on both the problem type and estimator strategy.
 
 # Required Methods
@@ -59,7 +59,7 @@ weighted_solve(p::MyProblem, θ, ω) = (W = Diagonal(ω); (p.A'*W*p.A) \\ (p.A'*
 data_size(p::MyProblem) = length(p.b)
 problem_dof(p::MyProblem) = size(p.A, 2)
 
-result = robust_solve(MyProblem(A, b), MEstimator(TukeyLoss()))
+result = fit(MyProblem(A, b), MEstimator(TukeyLoss()))
 ```
 """
 abstract type AbstractRobustProblem end
@@ -173,7 +173,7 @@ Result of robust linear fitting (IRLS, GNC).
 
 # Example
 ```julia
-result = robust_solve(A, b, GNCEstimator())
+result = fit(A, b, GNCEstimator())
 θ = result.value
 inliers = result.weights .> 0.5
 ```
@@ -196,7 +196,7 @@ IRLSWorkspace{Float64}(n)   # n = data_size(prob)
 IRLSWorkspace(n)             # defaults to Float64
 ```
 
-Pass to `robust_solve` via `workspace` kwarg. The workspace is reusable —
+Pass to `fit` via `workspace` kwarg. The workspace is reusable —
 results copy `r` and `ω` before returning.
 """
 struct IRLSWorkspace{T<:AbstractFloat}

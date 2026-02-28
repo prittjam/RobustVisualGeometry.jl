@@ -59,7 +59,6 @@ sample_size(::HomographyProblem) = 4
 model_type(::HomographyProblem{T}) where T = HomographyMat{T}
 solver_cardinality(::HomographyProblem) = SingleSolution()
 codimension(::HomographyProblem) = 2  # d_g = 2: two constraint equations from v̄ = λHū
-measurement_covariance(::HomographyProblem) = Homoscedastic()
 
 solve(p::HomographyProblem, idx::AbstractVector{Int}) = homography_4pt(p.cs, idx)
 

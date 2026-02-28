@@ -34,14 +34,15 @@ src/
 ├── interface.jl               # Shared interface (AbstractRobustProblem)
 ├── gep.jl                     # Generalized Eigenvalue Problem solver
 ├── estimators/
+│   ├── irls_framework.jl      # Generic IRLS loop (AbstractIRLSMethod)
 │   ├── irls.jl                # M-estimation (IRLS)
 │   ├── gnc.jl                 # Graduated Non-Convexity
 │   └── ransac/
 │       ├── types.jl           # RansacConfig, RansacWorkspace
-│       ├── traits.jl          # Holy traits: SolverCardinality, ConstraintType
+│       ├── traits.jl          # Holy traits: SolverCardinality, LinearFit
 │       ├── samplers.jl        # UniformSampler, ProsacSampler
 │       ├── interface.jl       # AbstractRansacProblem API
-│       ├── scoring.jl         # MarginalQuality, PredictiveMarginalQuality, sweep!
+│       ├── scoring.jl         # MarginalScoring{P}, sweep!, LO strategies
 │       ├── loop.jl            # Main RANSAC loop (Algorithm 2)
 │       └── problems/          # Problem implementations
 │           ├── line.jl
@@ -62,7 +63,7 @@ src/
 Include order in `src/RobustVisualGeometry.jl` is dependency-aware:
 
 1. **interface.jl, gep.jl** — shared types loaded first
-2. **estimators/irls.jl, gnc.jl** — M-estimation framework
+2. **estimators/irls_framework.jl, irls.jl, gnc.jl** — IRLS framework and M-estimation
 3. **estimators/ransac/** — framework files (types → traits → samplers → interface → scoring → loop)
 4. **fitting/conic/** — conic fitting pipelines
 5. **fitting/line.jl** — line fitting
@@ -78,13 +79,11 @@ Compile-time dispatch via traits defined in `estimators/ransac/traits.jl` and `e
 | Trait | Values | Purpose |
 |-------|--------|---------|
 | `SolverCardinality` | `SingleSolution`, `MultipleSolutions` | Number of models per minimal sample |
-| `ConstraintType` | `Constrained`, `Unconstrained` | Gauge constraint (`Ah=0` via SVD) vs free coordinates (`Ax≈b` via WLS) |
-| `CovarianceStructure` | `Homoscedastic`, `Heteroscedastic`, `Predictive` | Constraint covariance shape Σ̃\_{gᵢ} for scoring (Section 3.3) |
 
 ## Code Conventions
 
 - **Functions**: `snake_case` (`residuals!`, `sample_size`, `homography_jac_det`)
-- **Types**: `CamelCase` (`HomographyProblem`, `RansacWorkspace`, `MarginalQuality`)
+- **Types**: `CamelCase` (`HomographyProblem`, `RansacWorkspace`, `MarginalScoring`)
 - **Constants**: `UPPERCASE_SNAKE_CASE`
 - **Section dividers**: `# =============================================================================`
 - **Private helpers**: Prefix with `_` (`_try_model!`, `_adaptive_trials`, `_eiv_covariance`)

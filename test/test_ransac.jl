@@ -137,8 +137,8 @@ end
     # Marginal Quality
     # =================================================================
 
-    @testset "MarginalQuality constructor" begin
-        ms = MarginalQuality(100, 2, 50.0)
+    @testset "MarginalScoring constructor" begin
+        ms = MarginalScoring(100, 2, 50.0)
         @test ms.log2a ≈ log(100.0)
         @test ms.model_dof == 2
         @test length(ms.perm) == 100
@@ -152,11 +152,11 @@ end
         # lg[6] = log Γ(3) = log(2!) = log(2)
         @test ms.lg_table[6] ≈ log(2.0) atol=1e-12
         # Invalid halfwidth
-        @test_throws ArgumentError MarginalQuality(10, 2, -1.0)
+        @test_throws ArgumentError MarginalScoring(10, 2, -1.0)
     end
 
-    @testset "init_quality" begin
-        @test init_quality(MarginalQuality(10, 2, 1.0)) == (-Inf, -Inf)
+    @testset "init_score" begin
+        @test init_score(MarginalScoring(10, 2, 1.0)) == (-Inf, -Inf)
     end
 
     @testset "sweep! known partition" begin
@@ -164,7 +164,7 @@ end
         n = 15
         p = 2
         a = 50.0
-        scoring = MarginalQuality(n, p, a)
+        scoring = MarginalScoring(n, p, a)
 
         # Squared residuals: first 10 are small (σ≈0.1), last 5 are large
         losses = Float64[0.01, 0.02, 0.005, 0.03, 0.015,
@@ -178,11 +178,11 @@ end
         @test best_S > -Inf
     end
 
-    @testset "MarginalQuality line fitting" begin
+    @testset "MarginalScoring line fitting" begin
         points, true_model, n_inliers = make_line_data(n_inliers=200, n_outliers=50)
         problem = LineFittingProblem(points)
 
-        scoring = MarginalQuality(data_size(problem), sample_size(problem), 50.0)
+        scoring = MarginalScoring(data_size(problem), sample_size(problem), 50.0)
         result = ransac(problem, scoring;
                         config=RansacConfig(max_trials=2000, min_trials=100))
 
@@ -198,11 +198,11 @@ end
         @test sum(result.inlier_mask) >= n_inliers * 0.7
     end
 
-    @testset "MarginalQuality high outlier rate" begin
+    @testset "MarginalScoring high outlier rate" begin
         points, true_model, _ = make_line_data(n_inliers=50, n_outliers=200, seed=456)
         problem = LineFittingProblem(points)
 
-        scoring = MarginalQuality(data_size(problem), sample_size(problem), 20.0)
+        scoring = MarginalScoring(data_size(problem), sample_size(problem), 20.0)
         result = ransac(problem, scoring;
                         config=RansacConfig(max_trials=10_000, min_trials=500))
 
@@ -215,11 +215,11 @@ end
         @test model[2] ≈ true_model[2] atol=0.2
     end
 
-    @testset "MarginalQuality binary weights" begin
+    @testset "MarginalScoring binary weights" begin
         points, _, _ = make_line_data(n_inliers=100, n_outliers=50)
         problem = LineFittingProblem(points)
 
-        scoring = MarginalQuality(data_size(problem), sample_size(problem), 50.0)
+        scoring = MarginalScoring(data_size(problem), sample_size(problem), 50.0)
         result = ransac(problem, scoring;
                         config=RansacConfig(max_trials=1000))
 
@@ -231,11 +231,11 @@ end
                   eachindex(result.weights))
     end
 
-    @testset "MarginalQuality direct API" begin
+    @testset "MarginalScoring direct API" begin
         points, true_model, n_inliers = make_line_data(n_inliers=200, n_outliers=50)
         problem = LineFittingProblem(points)
 
-        scoring = MarginalQuality(data_size(problem), sample_size(problem), 50.0)
+        scoring = MarginalScoring(data_size(problem), sample_size(problem), 50.0)
         result = ransac(problem, scoring;
                         config=RansacConfig(max_trials=2000, min_trials=100))
 
@@ -252,7 +252,7 @@ end
         @test all(w -> w == 0.0 || w == 1.0, result.weights)
     end
 
-    @testset "MarginalQuality with workspace reuse" begin
+    @testset "MarginalScoring with workspace reuse" begin
         points, _, _ = make_line_data(n_inliers=100, n_outliers=50)
         problem = LineFittingProblem(points)
 
@@ -260,7 +260,7 @@ end
                              model_type(problem))
 
         # Run twice with same workspace
-        scoring = MarginalQuality(data_size(problem), sample_size(problem), 50.0)
+        scoring = MarginalScoring(data_size(problem), sample_size(problem), 50.0)
         r1 = ransac(problem, scoring;
                      config=RansacConfig(max_trials=500), workspace=ws)
         @test r1.converged
@@ -274,7 +274,7 @@ end
         points, _, _ = make_line_data()
         problem = LineFittingProblem(points)
 
-        scoring = MarginalQuality(data_size(problem), sample_size(problem), 50.0)
+        scoring = MarginalScoring(data_size(problem), sample_size(problem), 50.0)
         result = ransac(problem, scoring;
                         config=RansacConfig(max_trials=500))
 
@@ -296,13 +296,13 @@ end
     # Noise Posterior (dof field)
     # =================================================================
 
-    @testset "dof field — MarginalQuality" begin
+    @testset "dof field — MarginalScoring" begin
         points, _, n_inliers = make_line_data(n_inliers=200, n_outliers=50, noise=0.1)
         problem = LineFittingProblem(points)
         p = sample_size(problem)  # 2 for line fitting
 
-        # Direct MarginalQuality: returns dof = n_inliers - p
-        scoring = MarginalQuality(data_size(problem), p, 50.0)
+        # Direct MarginalScoring: returns dof = n_inliers - p
+        scoring = MarginalScoring(data_size(problem), p, 50.0)
         result = ransac(problem, scoring;
                         config=RansacConfig(max_trials=2000, min_trials=100))
         @test result.converged
@@ -317,12 +317,12 @@ end
         @test result.scale ≈ sqrt(RSS / nu)
     end
 
-    @testset "dof field — MarginalQuality direct" begin
+    @testset "dof field — MarginalScoring direct" begin
         points, _, _ = make_line_data(n_inliers=200, n_outliers=50, noise=0.1)
         problem = LineFittingProblem(points)
         p = sample_size(problem)
 
-        scoring = MarginalQuality(data_size(problem), p, 50.0)
+        scoring = MarginalScoring(data_size(problem), p, 50.0)
         result = ransac(problem, scoring;
                         config=RansacConfig(max_trials=2000, min_trials=100))
         @test result.converged

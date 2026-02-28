@@ -21,7 +21,7 @@ dst = [SA[112.0, 195.0], SA[310.0, 148.0], ...]
 
 # RANSAC with marginal likelihood scoring (threshold-free, scale-free)
 problem = HomographyProblem(csponds(src, dst))
-scoring = MarginalQuality(problem, 50.0)  # a = outlier half-width
+scoring = MarginalScoring(problem, 50.0)  # a = outlier half-width
 result = ransac(problem, scoring)
 
 H = result.value                          # 3×3 homography matrix
@@ -39,7 +39,7 @@ A = [1.0 0.0; 0.0 1.0; 1.0 1.0; 10.0 0.0]  # last row: outlier
 b = [1.0, 1.0, 2.0, 100.0]
 
 prob = LinearRobustProblem(A, b)
-result = robust_solve(prob, MEstimator(TukeyLoss()))
+result = fit(prob, MEstimator(TukeyLoss()))
 
 x = result.value          # estimated parameters
 w = result.weights        # final IRLS weights (outlier → 0)

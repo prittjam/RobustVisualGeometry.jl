@@ -51,6 +51,26 @@ function _solve_smallest_gep(A::SMatrix{N,N,Float64}, B::SMatrix{N,N,Float64}) w
 end
 
 # =============================================================================
+# Unweighted Taubin GEP (dimension-generic)
+# =============================================================================
+
+"""
+    _taubin_seed_gep(xis, Js) -> SVector{N}
+
+Unweighted Taubin solve: M = Σ ξᵢξᵢᵀ, N = Σ JᵢJᵢᵀ, solve smallest GEP(M, N).
+Dimension-generic via SVector{N,T}; used by both conic and F-matrix Taubin seeds.
+"""
+function _taubin_seed_gep(xis::Vector{SVector{N,T}}, Js) where {N,T}
+    M = zero(SMatrix{N,N,T,N*N})
+    N_mat = zero(SMatrix{N,N,T,N*N})
+    @inbounds for i in 1:length(xis)
+        M += xis[i] * xis[i]'
+        N_mat += Js[i] * Js[i]'
+    end
+    _solve_smallest_gep(M, N_mat)
+end
+
+# =============================================================================
 # Convergence Metric
 # =============================================================================
 

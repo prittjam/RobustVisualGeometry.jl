@@ -52,14 +52,15 @@ RANSAC problems implement: `sample_size`, `data_size`, `model_type`, `codimensio
 ### Quality Functions
 
 ```
-AbstractQualityFunction                      RANSAC quality scoring
-└── AbstractMarginalQuality                  Marginal likelihood family
-    ├── MarginalQuality                      Threshold-free marginal likelihood
-    └── PredictiveMarginalQuality            Prediction-corrected variant
+AbstractScoring                      RANSAC quality scoring
+└── MarginalScoring{P}                       Scale-free marginal likelihood
+    P=Nothing  → model-certain (default)
+    P=Predictive → prediction-corrected variant
 ```
 
-Quality functions score model hypotheses. `MarginalQuality` and `PredictiveMarginalQuality`
-use Bayesian marginal likelihoods for automatic threshold and scale selection.
+Quality functions score model hypotheses. `MarginalScoring{Nothing}` and
+`MarginalScoring{Predictive}` (aliased as `PredictiveMarginalScoring`) use
+Bayesian marginal likelihoods for automatic threshold and scale selection.
 
 ## Local Optimization (LO-RANSAC)
 
@@ -67,12 +68,10 @@ Local optimization refines promising hypotheses during the RANSAC loop via
 alternating refit-resweep cycles. Controlled by `AbstractLocalOptimization`:
 
 - `NoLocalOptimization` — no local optimization (default)
-- `ConvergeThenRescore` — WLS to convergence, then re-sweep (Strategy A)
-- `StepAndRescore` — single WLS step, then re-sweep (Strategy B)
+- `PosteriorIrls` — posterior-weight IRLS refinement
 
-Problems that support LO-RANSAC implement `fit(problem, mask, weights, strategy)`
-for weighted least-squares fitting on the inlier subset, where `strategy::FitStrategy`
-is resolved from `fit_strategy(lo)`. The default strategy is `LinearFit()` (DLT via SVD).
+Problems that support LO-RANSAC implement `fit(problem, mask, weights, ::LinearFit)`
+for weighted least-squares fitting on the inlier subset.
 
 ## Holy Trait Dispatch
 
@@ -81,9 +80,6 @@ Key traits that control RANSAC behavior at compile time:
 | Trait | Values | Purpose |
 |-------|--------|---------|
 | `SolverCardinality` | `SingleSolution`, `MultipleSolutions` | Number of models per minimal sample |
-| `ConstraintType` | `Constrained`, `Unconstrained` | Gauge constraint (`Ah=0` via SVD) vs free coordinates (`Ax≈b` via WLS) |
-| `CovarianceStructure` | `Homoscedastic`, `Heteroscedastic`, `Predictive` | Constraint covariance shape Σ̃\_{gᵢ} for scoring (Section 3.3) |
-| `FitStrategy` | `LinearFit` | Solver for LO-RANSAC refit (`fit_strategy(lo)` maps LO type → solver) |
 
 ## Dependency on VisualGeometryCore
 

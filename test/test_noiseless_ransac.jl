@@ -144,8 +144,8 @@ end
 
             problem = HomographyProblem(cs)
             config = RansacConfig(; max_trials=10_000, confidence=0.9999, min_trials=100)
-            # Use MarginalQuality with very small outlier halfwidth for noiseless data
-            scoring = MarginalQuality(data_size(problem), sample_size(problem), 1e-4)
+            # Use MarginalScoring with very small outlier halfwidth for noiseless data
+            scoring = MarginalScoring(data_size(problem), sample_size(problem), 1e-4)
             result = ransac(problem, scoring; config)
 
             @test result.converged
@@ -197,8 +197,8 @@ end
 
             problem = FundMatProblem(cs)
             config = RansacConfig(; max_trials=200_000, confidence=0.9999, min_trials=500)
-            # Use MarginalQuality with very small outlier halfwidth for noiseless data
-            scoring = MarginalQuality(data_size(problem), sample_size(problem), 1e-4)
+            # Use MarginalScoring with very small outlier halfwidth for noiseless data
+            scoring = MarginalScoring(data_size(problem), sample_size(problem), 1e-4)
             result = ransac(problem, scoring; config)
 
             @test result.converged

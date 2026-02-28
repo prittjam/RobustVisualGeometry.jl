@@ -8,7 +8,7 @@
 Fundamental Numerical Scheme: iteratively bias-corrected Sampson distance
 minimization. Typically converges in 3-5 iterations.
 
-Uses the framework: `robust_solve` with `L2Loss` (unit weights) reduces the
+Uses the framework: `fit` with `L2Loss` (unit weights) reduces the
 IRLS loop to pure FNS iteration.
 
 # Arguments
@@ -22,7 +22,7 @@ function fit_conic_fns(points; sigma::Real=1.0, max_iter::Int=20, rtol::Float64=
     prob = ConicFNSProblem(norm_pts, sigma_norm)
     # L2Loss gives unit weights → IRLS loop = pure FNS iteration.
     # init=_taubin_seed bypasses the 5-iteration FNS warmup in initial_solve.
-    result = robust_solve(prob, MEstimator(L2Loss());
+    result = fit(prob, MEstimator(L2Loss());
                           init=_taubin_seed(prob.xis),
                           scale=FixedScale(σ=1.0), max_iter, rtol)
     _finalize_conic_result(result, T, pts, sigma)
@@ -35,7 +35,7 @@ end
 Robust FNS with IRLS: combines FNS bias correction with robust weighting
 via a redescending M-estimator.
 
-Uses the generic `robust_solve` with `ConicFNSProblem`.
+Uses the generic `fit` with `ConicFNSProblem`.
 
 # Arguments
 - `points`: 2×N matrix, N×2 matrix, or Vector of 2D points
@@ -51,7 +51,7 @@ function fit_conic_robust_fns(points; sigma::Real=1.0, loss::AbstractLoss=TukeyL
                               max_iter::Int=50, rtol::Float64=1e-5)
     pts, norm_pts, T, sigma_norm = _prepare_and_normalize(points, sigma)
     prob = ConicFNSProblem(norm_pts, sigma_norm)
-    result = robust_solve(prob, MEstimator(loss); scale=_scale_estimator(scale), max_iter, rtol)
+    result = fit(prob, MEstimator(loss); scale=_scale_estimator(scale), max_iter, rtol)
     _finalize_conic_result(result, T, pts, sigma)
 end
 
@@ -93,7 +93,7 @@ function fit_conic_robust_taubin_fns(points; sigma::Real=1.0,
     pts, norm_pts, T, sigma_norm = _prepare_and_normalize(points, sigma)
     prob_taubin = ConicTaubinProblem(norm_pts, sigma_norm)
     prob_fns = ConicFNSProblem(norm_pts, sigma_norm)
-    result = robust_solve(prob_taubin, MEstimator(loss);
+    result = fit(prob_taubin, MEstimator(loss);
                           scale=_scale_estimator(scale), max_iter=max_iter_taubin, rtol,
                           refine=prob_fns, refine_max_iter=max_iter_fns)
     _finalize_conic_result(result, T, pts, sigma)

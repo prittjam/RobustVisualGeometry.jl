@@ -255,8 +255,6 @@ function residual_jacobian(p::InhomLineFittingProblem{T},
     return (rᵢ, Gᵢ, zero(T))
 end
 
-constraint_type(::InhomLineFittingProblem) = Unconstrained()
-
 # =============================================================================
 # EivLineFittingProblem — Errors-in-Variables Line (noise in both x and y)
 # =============================================================================
@@ -384,5 +382,3 @@ function residual_jacobian(p::EivLineFittingProblem{T},
     end
     return (rᵢ, Gᵢ, zero(T))
 end
-
-constraint_type(::EivLineFittingProblem) = Unconstrained()

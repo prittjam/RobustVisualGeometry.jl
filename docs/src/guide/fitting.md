@@ -99,7 +99,7 @@ Or build the pipeline manually:
 
 ```julia
 problem = HomographyProblem(csponds(src, dst))
-quality = MarginalQuality(problem, 50.0)
+quality = MarginalScoring(problem, 50.0)
 result = ransac(problem, quality)
 ```
 

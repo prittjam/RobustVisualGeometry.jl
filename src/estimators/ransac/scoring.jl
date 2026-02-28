@@ -1,41 +1,41 @@
 # =============================================================================
-# Scoring — Quality functions for scale-free marginal RANSAC
+# Scoring — Scoring functions for scale-free marginal RANSAC
 # =============================================================================
 #
 # Defines how RANSAC candidate models are evaluated.
 #
 # Contents:
-#   1. AbstractQualityFunction
-#   2. CovarianceStructure trait (Homoscedastic, Heteroscedastic, Predictive)
+#   1. AbstractScoring
+#   2. Uncertain{M} type dispatch for model-uncertain scoring
 #   3. Local optimization strategies (NoLocalOptimization)
-#   4. Concrete quality types (MarginalQuality, PredictiveMarginalQuality)
-#   5. init_quality, default_local_optimization, _quality_improved
+#   4. MarginalScoring{P} (P=Nothing for model-certain, P=Predictive for model-uncertain)
+#   5. init_score, default_local_optimization, _score_improved
 #
 # DEPENDENCY: Requires AbstractRansacProblem from ransac_interface.jl
 #
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Quality Functions (Scoring Strategies)
+# Scoring Strategies
 # -----------------------------------------------------------------------------
 
 """
-    AbstractQualityFunction
+    AbstractScoring
 
-Abstract type for RANSAC model quality functions.
+Abstract type for RANSAC model scoring functions.
 
-Quality functions determine how candidate models are scored. The scale-free
+Scoring functions determine how candidate models are scored. The scale-free
 marginal score (Eq. 12) eliminates σ by marginalizing under the Jeffreys prior
 π(σ²) ∝ 1/σ², then optimizes over partitions I. Higher = better.
 
 Built-in strategies:
-- `MarginalQuality`: Model-certain score S(θ,I) (Section 3, Eq. 12)
-- `PredictiveMarginalQuality`: Predictive score S_pred(θ̂,I) incorporating
+- `MarginalScoring`: Model-certain score S(θ,I) (Section 3, Eq. 12)
+- `PredictiveMarginalScoring`: Predictive score S_pred(θ̂,I) incorporating
   per-point leverages (Section 4, Eq. 20)
 
-See also: [`MarginalQuality`](@ref), [`PredictiveMarginalQuality`](@ref)
+See also: [`MarginalScoring`](@ref), [`PredictiveMarginalScoring`](@ref)
 """
-abstract type AbstractQualityFunction end
+abstract type AbstractScoring end
 
 # -----------------------------------------------------------------------------
 # Local Refinement Strategies
@@ -58,137 +58,134 @@ abstract type AbstractLocalOptimization end
     NoLocalOptimization <: AbstractLocalOptimization
 
 No local optimization. The candidate model is scored directly without any
-refit. Default local optimization for all quality functions
+refit. Default local optimization for all scoring functions
 (via `default_local_optimization`).
 """
 struct NoLocalOptimization <: AbstractLocalOptimization end
 
 """
-    ConvergeThenRescore <: AbstractLocalOptimization
+    PosteriorIrls <: AbstractLocalOptimization
 
-Strategy A (Algorithm 3): Run WLS to convergence at fixed inlier mask,
-then re-sweep to find the new optimal partition. Repeat until score
-does not improve.
-
-# Fields
-- `max_fit_iter::Int=5`: Max WLS iterations per outer loop
-- `max_outer_iter::Int=3`: Max refit-resweep outer iterations
-"""
-Base.@kwdef struct ConvergeThenRescore <: AbstractLocalOptimization
-    max_fit_iter::Int = 5
-    max_outer_iter::Int = 3
-end
-
-"""
-    StepAndRescore <: AbstractLocalOptimization
-
-Strategy B (Algorithm 4): Single WLS step, then re-sweep. Repeat until
-score does not improve. Keeps partition maximally current.
+Strategy C: Posterior-weight IRLS refinement. Computes posterior
+inlier probabilities from the marginal score partition, uses them as
+soft weights for WLS refit, re-scores, and iterates.
 
 # Fields
-- `max_outer_iter::Int=5`: Max step-resweep outer iterations
+- `max_outer_iter::Int=5`: Max posterior-IRLS outer iterations
 """
-Base.@kwdef struct StepAndRescore <: AbstractLocalOptimization
+Base.@kwdef struct PosteriorIrls <: AbstractLocalOptimization
     max_outer_iter::Int = 5
 end
 
-"""
-    fit_strategy(lo::AbstractLocalOptimization) -> FitStrategy
 
-Return the fit strategy trait for the given local optimization type.
-Default: `LinearFit()`.
+# =============================================================================
+# Posterior Weights — Soft inlier/outlier probabilities
+# =============================================================================
+
 """
-fit_strategy(::AbstractLocalOptimization) = LinearFit()
+    _posterior_weights!(w, scores, perm, k, d_g, log2a)
+
+Compute posterior inlier probabilities from per-point Mahalanobis scores.
+
+Given the current partition (perm[1:k] = inliers), estimates σ² from
+inlier RSS, then for each point computes the posterior probability of
+being an inlier under a Gaussian-vs-Uniform mixture:
+
+    w[i] = p(inlier | qᵢ) = 1 / (1 + exp(log_pout - log_pin))
+
+where log_pin = -(d_g/2) log(2πσ²) - qᵢ/(2σ²) and
+log_pout = -d_g log(2a).
+
+Uses the MLE ŝ² = RSS/(k·d_g) rather than the unbiased estimator
+RSS/((k-p)·d_g) because ŝ² is the mode of the inverse-gamma posterior
+on σ² under the Jeffreys prior π(σ²) ∝ 1/σ², consistent with the
+marginal likelihood derivation.
+"""
+function _posterior_weights!(w::AbstractVector{T}, scores::AbstractVector{T},
+                              perm::Vector{Int}, k::Int,
+                              d_g::Int, log2a::Float64) where T
+    # Estimate σ² from inlier RSS — MLE (mode of inverse-gamma posterior)
+    RSS = zero(T)
+    @inbounds for j in 1:k
+        RSS += scores[perm[j]]
+    end
+    σ² = RSS / (k * d_g)
+    σ² = max(σ², eps(T))
+
+    log_norm = -T(d_g) / 2 * log(2 * T(π) * σ²)
+    log_pout = -T(d_g) * T(log2a)
+
+    @inbounds for i in eachindex(w)
+        log_pin = log_norm - scores[i] / (2 * σ²)
+        w[i] = one(T) / (one(T) + exp(log_pout - log_pin))
+    end
+    nothing
+end
 
 # -----------------------------------------------------------------------------
-# Covariance Structure Trait (Section 3.3: Specializations)
+# Uncertain{M} Dispatch (Section 3.3: Specializations)
 # -----------------------------------------------------------------------------
-
-"""
-    CovarianceStructure
-
-Holy Trait for the constraint covariance shape Σ̃_{gᵢ} in the scale-free
-marginal score (Section 3.3, Eq. 12).
-
-The three specializations (Section 3.3, listed most to least general)
-differ only in the covariance penalty ℓᵢ = log|Σ̃_{gᵢ}| that enters
-Algorithm 1:
-
-- `Predictive()`:      Σ̃_{gᵢ} = ∂ₓgᵢ Σ̃_{xᵢ} (∂ₓgᵢ)ᵀ + ∂θgᵢ Σ̃_θ (∂θgᵢ)ᵀ  (Eq. 7)
-- `Heteroscedastic()`: Σ̃_{gᵢ} = ∂ₓgᵢ Σ̃_{xᵢ} (∂ₓgᵢ)ᵀ                        (Σ_θ = 0)
-- `Homoscedastic()`:   Σ̃_{gᵢ} = σ² ‖∂ₓgᵢ‖²  (scalar, dg=1, Σ̃_{xᵢ} = I)     (Eq. 21)
-
-For the homoscedastic case, ℓᵢ cancels in the sweep (constant factor), so
-ℓᵢ = 0 in Algorithm 1.
-"""
-abstract type CovarianceStructure end
-
-"""
-    Homoscedastic <: CovarianceStructure
-
-Section 3.3, specialization "Isotropic, dg=1": Σ̃_{xᵢ} = I and Σ_θ = 0.
-The constraint covariance shape reduces to the scalar cᵢ = ‖∂ₓgᵢ‖² (Eq. 21)
-which is constant across points for many problems. The covariance penalty
-ℓᵢ = 0 because the constant factor cancels between RSS_I and L in Eq. 12.
-"""
-struct Homoscedastic <: CovarianceStructure end
-
-"""
-    Heteroscedastic <: CovarianceStructure
-
-Section 3.3, specialization "Model certain": Σ_θ = 0, only measurement noise
-contributes to Σ̃_{gᵢ} = ∂ₓgᵢ Σ̃_{xᵢ} (∂ₓgᵢ)ᵀ. The covariance penalty
-ℓᵢ = log|Σ̃_{gᵢ}| varies per point and must be included in Algorithm 1.
-"""
-struct Heteroscedastic <: CovarianceStructure end
-
-"""
-    Predictive <: CovarianceStructure
-
-Section 3.3, specialization "Model uncertain": Σ_θ ≠ 0, both measurement noise
-and parameter estimation error contribute to Σ̃_{gᵢ} (Eq. 7). The covariance
-penalty ℓᵢ = log|Σ̃_{gᵢ}| includes both the measurement term log|∂ₓgᵢ Σ̃_{xᵢ} (∂ₓgᵢ)ᵀ|
-and the model uncertainty term log|I + (L⁻¹∂θgᵢ) Σ̃_θ (L⁻¹∂θgᵢ)ᵀ|.
-"""
-struct Predictive <: CovarianceStructure end
+#
+# Model uncertainty dispatch (type dispatch on model argument):
+#   model::M             → model-certain (Σ_θ = 0, treat θ as exact)
+#   model::Uncertain{M}  → model-uncertain (Σ_θ = model.param_cov)
+#
+# The model carries its own covariance via VGC's Uncertain{V,T,N} wrapper.
+# _with_model_cov() wraps after minimal solve, _with_fit_cov() wraps after LO.
+# MarginalScoring never wraps → zero overhead.
+#
+# All residuals!() implementations return whitened residuals such that
+# r² = Mahalanobis distance. The two score! methods:
+#
+#   model::M (certain)     → qᵢ = rᵢ²
+#   model::Uncertain{M}   → qᵢ = rᵢ²/ṽᵢ (predictive variance inflation)
+#
+# ℓᵢ = 0 for both: the outlier density is defined in the whitened constraint
+# space r_i = L⁻¹g_i (where LLᵀ = Σ̃_{gᵢ}), giving
+# p_out(g_i) = (2a)^{-d_g} |Σ̃_{gᵢ}|^{-1/2}. The Jacobian
+# |Σ̃_{gᵢ}|^{-1/2} cancels with the identical factor from the inlier
+# Gaussian normalization, so ℓᵢ = 0.
+# -----------------------------------------------------------------------------
+#
+# (Removed: MeasurementCovariance trait — all residuals! return whitened r, so
+#  the Isotropic/Heteroscedastic axis was redundant. See git log for history.)
 
 # -----------------------------------------------------------------------------
 # Concrete Scoring Strategies
 # -----------------------------------------------------------------------------
 
 """
-    AbstractMarginalQuality <: AbstractQualityFunction
+    Predictive
 
-Abstract supertype for scale-free marginal likelihood scoring (Section 3).
+Type tag for the predictive variant of `MarginalScoring`.
 
-All variants share `sweep!` (Algorithm 1) for finding the optimal partition
-I* = {(1),...,(k*)} and the two-level gating loop of Algorithm 2.
+`MarginalScoring{Predictive}` incorporates model estimation uncertainty
+(Σ̃_θ from the minimal solver or LO fit) into per-point scores.
+`MarginalScoring{Nothing}` treats the model as exact (Σ_θ = 0).
+
+See also: [`MarginalScoring`](@ref), [`PredictiveMarginalScoring`](@ref)
 """
-abstract type AbstractMarginalQuality <: AbstractQualityFunction end
+struct Predictive end
 
 """
-    MarginalQuality <: AbstractMarginalQuality
+    MarginalScoring{P} <: AbstractScoring
 
-Model-certain scale-free marginal score (Section 3, Eq. 12).
+Scale-free marginal score (Section 3, Eq. 12).
 
-Treats the model θ as exact (Σ_θ = 0, Section 3.3 "model certain"):
-the only randomness is measurement noise. The score marginalizes σ²
-under the Jeffreys prior π(σ²) ∝ 1/σ² (Section 3.1):
+Parameterized by `P`:
+- `MarginalScoring{Nothing}` — Model-certain: treats θ as exact (Σ_θ = 0).
+- `MarginalScoring{Predictive}` — Model-uncertain: incorporates estimation
+  uncertainty Σ̃_θ via per-point leverages (Section 4, Eq. 20).
 
-    S(θ, I) = log Γ(nᵢ dg/2) − (nᵢ dg/2) log(π RSS_I)
-              − ½ Σᵢ∈I log|Σ̃_{gᵢ}| − nₒ dg log(2a)              (12)
+The score marginalizes σ² under the Jeffreys prior π(σ²) ∝ 1/σ²:
 
-where nᵢ = |I|, RSS_I = Σᵢ∈I qᵢ (weighted residual sum of squares),
-nₒ = N − nᵢ, a is the outlier domain half-width, and dg the codimension.
+    S(θ, I) = log Γ(nᵢ dg/2) − (nᵢ dg/2) log(π RSS_I) − nₒ dg log(2a)
 
-The four terms of the score (Section 3.2):
-  1. "Inlier reward":      log Γ(nᵢ dg/2)
-  2. "Fit quality":        −(nᵢ dg/2) log(π RSS_I)
-  3. "Covariance penalty": −½ Σᵢ∈I log|Σ̃_{gᵢ}|
-  4. "Outlier penalty":    −nₒ dg log(2a)
+where nᵢ = |I|, RSS_I = Σᵢ∈I qᵢ, nₒ = N − nᵢ, a is the outlier domain
+half-width, and dg the codimension.
 
-Per-point scores: qᵢ = gᵢᵀ Σ̃_{gᵢ}⁻¹ gᵢ.
-Per-point penalties: ℓᵢ = log|Σ̃_{gᵢ}|.
+Per-point scores qᵢ = gᵢᵀ Σ̃_{gᵢ}⁻¹ gᵢ, where Σ̃_{gᵢ} includes model
+uncertainty for the predictive variant.
 
 # Fields
 - `log2a::Float64`: log(2a), precomputed outlier penalty per point
@@ -197,13 +194,21 @@ Per-point penalties: ℓᵢ = log|Σ̃_{gᵢ}|.
 - `perm::Vector{Int}`: Pre-allocated sortperm buffer (mutated by `sweep!`)
 - `lg_table::Vector{Float64}`: Precomputed log Γ(k·dg/2) for k = 1..N
 """
-mutable struct MarginalQuality <: AbstractMarginalQuality
+mutable struct MarginalScoring{P} <: AbstractScoring
     log2a::Float64
     model_dof::Int
     codimension::Int
     perm::Vector{Int}
     lg_table::Vector{Float64}
 end
+
+"""
+    PredictiveMarginalScoring
+
+Alias for `MarginalScoring{Predictive}`. Model-uncertain scoring that
+incorporates estimation uncertainty Σ̃_θ (Section 4, Eq. 20).
+"""
+const PredictiveMarginalScoring = MarginalScoring{Predictive}
 
 """
     _build_lg_table(n, d_g=1)
@@ -240,115 +245,64 @@ function _build_lg_table(n::Int, d_g::Int=1)
     return lg
 end
 
-function MarginalQuality(n::Int, p::Int, a::Float64; codimension::Int=1)
+function MarginalScoring{P}(n::Int, p::Int, a::Float64; codimension::Int=1) where P
     a > 0 || throw(ArgumentError("outlier_halfwidth must be positive, got $a"))
     lg = _build_lg_table(n, codimension)
-    MarginalQuality(log(2a), p, codimension, Vector{Int}(undef, n), lg)
+    MarginalScoring{P}(log(2a), p, codimension, Vector{Int}(undef, n), lg)
 end
 
+# Bare MarginalScoring(n, p, a) defaults to model-certain
+MarginalScoring(n::Int, p::Int, a::Float64; codimension::Int=1) =
+    MarginalScoring{Nothing}(n, p, a; codimension=codimension)
+
 """
-    MarginalQuality(problem::AbstractRansacProblem, a::Float64)
+    MarginalScoring(problem::AbstractRansacProblem, a::Float64)
+    MarginalScoring{P}(problem::AbstractRansacProblem, a::Float64)
 
 Problem-aware constructor. Derives N, m, and dg from the problem.
 """
-function MarginalQuality(problem::AbstractRansacProblem, a::Float64)
-    MarginalQuality(data_size(problem), sample_size(problem), a;
-                     codimension=codimension(problem))
+MarginalScoring(problem::AbstractRansacProblem, a::Float64) =
+    MarginalScoring{Nothing}(data_size(problem), sample_size(problem), a;
+                              codimension=codimension(problem))
+
+function MarginalScoring{P}(problem::AbstractRansacProblem, a::Float64) where P
+    MarginalScoring{P}(data_size(problem), sample_size(problem), a;
+                        codimension=codimension(problem))
 end
 
 """
-    PredictiveMarginalQuality <: AbstractMarginalQuality
+    init_score(scoring::AbstractScoring)
 
-Model-uncertain scale-free marginal score (Section 3.3 "model uncertain",
-Section 4, Appendix D).
-
-Because θ̂ is estimated from a minimal sample, each constraint gᵢ carries
-additional variance from the estimation error θ̂ − θ. The full constraint
-covariance shape (Eq. 7, 28) is:
-
-    Σ̃_{gᵢ} = ∂ₓgᵢ Σ̃_{xᵢ} (∂ₓgᵢ)ᵀ + ∂θgᵢ Σ̃_θ (∂θgᵢ)ᵀ
-
-where Σ̃_θ = ((∂θg_min)ᵀ W (∂θg_min))⁻¹ is the estimation covariance
-shape from the minimal sample (Eq. 27, Appendix D).
-
-The score (Eq. 12) uses qᵢ = gᵢᵀ Σ̃_{gᵢ}⁻¹ gᵢ and ℓᵢ = log|Σ̃_{gᵢ}|.
-
-Falls back to `MarginalQuality` (Σ_θ = 0) when `solver_jacobian` is
-not available for the problem.
-
-# Fields
-Same as [`MarginalQuality`](@ref).
+Return the initial "best" score value for the scoring strategy.
+`MarginalScoring`: `(-Inf, -Inf)` (global, local score tuple to maximize)
 """
-mutable struct PredictiveMarginalQuality <: AbstractMarginalQuality
-    log2a::Float64
-    model_dof::Int
-    codimension::Int
-    perm::Vector{Int}
-    lg_table::Vector{Float64}
-end
-
-function PredictiveMarginalQuality(n::Int, p::Int, a::Float64; codimension::Int=1)
-    a > 0 || throw(ArgumentError("outlier_halfwidth must be positive, got $a"))
-    lg = _build_lg_table(n, codimension)
-    PredictiveMarginalQuality(log(2a), p, codimension, Vector{Int}(undef, n), lg)
-end
+init_score(::MarginalScoring) = (-Inf, -Inf)
 
 """
-    PredictiveMarginalQuality(problem::AbstractRansacProblem, a::Float64)
-
-Problem-aware constructor. Derives N, m, and dg from the problem.
-"""
-function PredictiveMarginalQuality(problem::AbstractRansacProblem, a::Float64)
-    PredictiveMarginalQuality(data_size(problem), sample_size(problem), a;
-                               codimension=codimension(problem))
-end
-
-"""
-    init_quality(scoring::AbstractQualityFunction)
-
-Return the initial "best" quality value for the scoring strategy.
-`AbstractMarginalQuality`: `(-Inf, -Inf)` (global, local score tuple to maximize)
-"""
-init_quality(::AbstractMarginalQuality) = (-Inf, -Inf)
-
-"""
-    default_local_optimization(scoring::AbstractQualityFunction) -> AbstractLocalOptimization
+    default_local_optimization(scoring::AbstractScoring) -> AbstractLocalOptimization
 
 Return the default local optimization strategy. Returns `NoLocalOptimization()` for
-all quality functions.
+all scoring functions.
 
 # Example
 ```julia
-scoring = MarginalQuality(100, 2, 50.0)
+scoring = MarginalScoring(100, 2, 50.0)
 default_local_optimization(scoring)  # NoLocalOptimization()
 ```
 """
-default_local_optimization(::AbstractQualityFunction) = NoLocalOptimization()
-
-"""
-    covariance_structure(problem, scoring) -> CovarianceStructure
-
-Determine the effective covariance structure for the constraint covariance
-shape Σ̃_{gᵢ} (Section 3.3).
-
-- `MarginalQuality`:            delegates to `measurement_covariance(problem)`
-                                 (model certain: Σ_θ = 0)
-- `PredictiveMarginalQuality`:  always `Predictive()` (model uncertain: Σ_θ ≠ 0)
-"""
-covariance_structure(problem, ::MarginalQuality) = measurement_covariance(problem)
-covariance_structure(problem, ::PredictiveMarginalQuality) = Predictive()
+default_local_optimization(::AbstractScoring) = NoLocalOptimization()
 
 # -----------------------------------------------------------------------------
-# Quality Improvement Check (unified: higher = better)
+# Score Improvement Check (unified: higher = better)
 # -----------------------------------------------------------------------------
 
 """
-    _quality_improved(scoring, new, old) -> Bool
+    _score_improved(scoring, new, old) -> Bool
 
-Check whether `new` quality is strictly better than `old`.
+Check whether `new` score is strictly better than `old`.
 All strategies use higher = better convention.
 """
-_quality_improved(::AbstractMarginalQuality, new, old) = new[2] > old[2]
+_score_improved(::MarginalScoring, new, old) = new[2] > old[2]
 
 # =============================================================================
 # Sort-and-Sweep (Algorithm 1, Section 5.1)
@@ -406,33 +360,55 @@ function sweep!(perm::Vector{Int}, lg_table::Vector{Float64},
     return best_S, best_k
 end
 
-# Dispatch wrapper for all AbstractMarginalQuality subtypes
-sweep!(s::AbstractMarginalQuality, scores::Vector{T}, penalties::Vector{T}, n::Int) where T =
+# Dispatch wrapper for all MarginalScoring{P} variants
+sweep!(s::MarginalScoring, scores::Vector{T}, penalties::Vector{T}, n::Int) where T =
     sweep!(s.perm, s.lg_table, s.model_dof, s.log2a, s.codimension, scores, penalties, n)
 
 # =============================================================================
-# model_covariance — Dispatch point for prediction variance (Section 4)
+# Model Covariance Wrapping — Uncertain{M} construction
 # =============================================================================
 
 """
-    model_covariance(scoring, problem, model, sample_indices) -> Σ̃_θ or nothing
+    _with_model_cov(scoring, problem, model, sample_indices)
 
-Compute the estimation covariance shape Σ̃_θ (Eq. 27, Appendix D).
+Wrap `model` with estimation covariance Σ̃_θ = JJᵀ from the minimal solver.
 
-- `MarginalQuality`: returns `nothing` (model certain: Σ_θ = 0)
-- `PredictiveMarginalQuality`: returns `Σ̃_θ = J Jᵀ` where J is the solver
-  Jacobian ∂θ/∂x_min. The product J·Jᵀ gives the estimation covariance shape
-  (Eq. 27): Σ_θ = σ² Σ̃_θ.
-
-Returns `nothing` if solver_jacobian is unavailable.
+- `MarginalScoring{Nothing}`: returns plain model (model-certain, no wrapping)
+- `MarginalScoring{Predictive}`: returns `Uncertain(model, JJᵀ)` when
+  `solver_jacobian` is available, otherwise plain model (fallback)
 """
-model_covariance(::MarginalQuality, problem, model, sample_indices) = nothing
+_with_model_cov(::MarginalScoring{Nothing}, _problem, model, _idx) = model
 
-function model_covariance(::PredictiveMarginalQuality, problem, model, sample_indices)
-    jac_info = solver_jacobian(problem, sample_indices, model)
-    isnothing(jac_info) && return nothing
-    return jac_info.J * jac_info.J'
+function _with_model_cov(::MarginalScoring{Predictive}, problem, model, idx)
+    jac_info = solver_jacobian(problem, idx, model)
+    isnothing(jac_info) && return model
+    Uncertain(model, jac_info.J * jac_info.J')
 end
+
+"""
+    _with_fit_cov(scoring, problem, model)
+
+Wrap `model` with estimation covariance from the least-squares fit.
+
+- `MarginalScoring{Nothing}`: returns plain model (no wrapping)
+- `MarginalScoring{Predictive}`: returns `Uncertain(model, Σ̃)` when
+  `fit_param_covariance(problem)` is available, otherwise plain model
+"""
+_with_fit_cov(::MarginalScoring{Nothing}, _problem, model) = model
+
+function _with_fit_cov(::MarginalScoring{Predictive}, problem, model)
+    cov = fit_param_covariance(problem)
+    isnothing(cov) && return model
+    Uncertain(model, cov)
+end
+
+"""
+    _plain_model(model)
+
+Extract the plain model from an `Uncertain` wrapper, or return as-is.
+"""
+_plain_model(m::Uncertain) = m.value
+_plain_model(m) = m
 
 # =============================================================================
 # _predictive_score_penalty — Per-point (q_i, log_v_i) with model covariance
@@ -497,31 +473,31 @@ function mask!(ws::RansacWorkspace, perm::Vector{Int}, k_star::Int)
 end
 
 # =============================================================================
-# score! — Trait-dispatched per-point scoring (Section 3.3)
+# score! — Type-dispatched per-point scoring (Section 3.3)
 # =============================================================================
 #
-# Three specializations of the constraint covariance shape Σ̃_{gᵢ} (Section 3.3):
+# All residuals!() implementations return whitened residuals such that
+# r² = Mahalanobis distance. Two methods dispatch on model type:
 #
-#   Homoscedastic   (isotropic, dg=1):  qᵢ = rᵢ²,               ℓᵢ = 0
-#   Heteroscedastic (model certain):    qᵢ = gᵢᵀΣ̃_{gᵢ}⁻¹gᵢ,    ℓᵢ = log|Σ̃_{gᵢ}|
-#   Predictive      (model uncertain):  qᵢ = gᵢᵀΣ̃_{gᵢ}⁻¹gᵢ,    ℓᵢ = log|Σ̃_{gᵢ}|
+#   model::M (certain)     → qᵢ = rᵢ²
+#   model::Uncertain{M}   → qᵢ = rᵢ²/ṽᵢ (predictive variance inflation)
 #
-# For Cases 2–3, residual_jacobian(problem, model, i) → (rᵢ, ∂θgᵢ_w, ℓᵢ_meas)
-# computes the whitened quantities and measurement log-determinant in one pass,
-# avoiding duplicate computation of sampson_jacobians.
+# ℓᵢ = 0 for both: the outlier density is defined in whitened space,
+# so covariance factors cancel.
 # =============================================================================
 
 """
     _sq_norm(r) -> T
 
 Squared norm: `r²` for scalar, `rᵀr` for vector. Computes the weighted
-squared residual qᵢ = gᵢᵀ Σ̃_{gᵢ}⁻¹ gᵢ from whitened quantities (Eq. 12).
+squared residual qᵢ from whitened residuals (Eq. 12).
 """
 @inline _sq_norm(r::Real) = r * r
 @inline _sq_norm(r::SVector) = dot(r, r)
 
-# Isotropic, dg=1 (Section 3.3): qᵢ = rᵢ², ℓᵢ = 0 (cᵢ cancels in Eq. 12)
-function score!(ws, problem, ::AbstractMarginalQuality, model, ::Homoscedastic)
+# --- Model-certain: qᵢ = rᵢ², ℓᵢ = 0 ---
+# Fast path: whitened residuals from residuals!, no Jacobians needed.
+function score!(ws, problem, ::MarginalScoring, model)
     n = data_size(problem)
     residuals!(ws.residuals, problem, model)
     @inbounds for i in 1:n
@@ -530,40 +506,21 @@ function score!(ws, problem, ::AbstractMarginalQuality, model, ::Homoscedastic)
     fill!(ws.penalties, zero(eltype(ws.penalties)))
 end
 
-# Model certain (Section 3.3): qᵢ = gᵢᵀΣ̃_{gᵢ}⁻¹gᵢ, ℓᵢ = log|Σ̃_{gᵢ}| (Eq. 12)
-# Uses residual_jacobian to compute whitened rᵢ = L⁻¹gᵢ and ℓᵢ in one pass.
-function score!(ws, problem, ::AbstractMarginalQuality, model, ::Heteroscedastic)
-    n = data_size(problem)
-    @inbounds for i in 1:n
-        rᵢ, _, ℓᵢ = residual_jacobian(problem, model, i)
-        ws.scores[i] = _sq_norm(rᵢ)         # qᵢ = rᵢᵀrᵢ = gᵢᵀΣ̃_{gᵢ}⁻¹gᵢ
-        ws.residuals[i] = sqrt(ws.scores[i]) # |rᵢ| for adaptive stopping
-        ws.penalties[i] = ℓᵢ                 # log|Σ̃_{gᵢ}|
-    end
-end
-
-# Model uncertain (Section 3.3, Eq. 7, 28): Σ̃_{gᵢ} includes estimation error.
-# Decomposition in whitened coordinates (LLᵀ = ∂ₓgᵢ Σ̃_{xᵢ} (∂ₓgᵢ)ᵀ):
-#   Σ̃_{gᵢ} = LLᵀ + ∂θgᵢ Σ̃_θ (∂θgᵢ)ᵀ
-#   log|Σ̃_{gᵢ}| = log|LLᵀ| + log|I + (L⁻¹∂θgᵢ) Σ̃_θ (L⁻¹∂θgᵢ)ᵀ|
-#                = ℓᵢ_meas + ℓᵢ_model
+# --- Model-uncertain: qᵢ = rᵢ²/ṽᵢ, ℓᵢ = 0 ---
+# Model uncertainty inflates prediction variance via Σ̃_θ from
+# the Uncertain{M} wrapper (not from ws.sample_indices).
 function score!(ws::RansacWorkspace{<:Any,M,T}, problem,
-                       scoring::PredictiveMarginalQuality,
-                       model::M, ::Predictive) where {M,T}
+                scoring::MarginalScoring,
+                model::Uncertain{M}) where {M,T}
     n = data_size(problem)
-    Σ̃_θ = model_covariance(scoring, problem, model, ws.sample_indices)
-
-    if !isnothing(Σ̃_θ)
-        @inbounds for i in 1:n
-            rᵢ, ∂θgᵢ_w, ℓᵢ_meas = residual_jacobian(problem, model, i)
-            ws.residuals[i] = sqrt(_sq_norm(rᵢ))
-            qᵢ, ℓᵢ_model = _predictive_score_penalty(rᵢ, ∂θgᵢ_w, Σ̃_θ, one(T))
-            ws.scores[i] = qᵢ
-            ws.penalties[i] = ℓᵢ_meas + ℓᵢ_model  # log|Σ̃_{gᵢ}|
-        end
-    else
-        # Fallback to model-certain (Σ_θ = 0) when solver_jacobian unavailable
-        score!(ws, problem, scoring, model, measurement_covariance(problem))
+    θ = model.value
+    Σ̃_θ = model.param_cov
+    @inbounds for i in 1:n
+        rᵢ, ∂θgᵢ_w, _ = residual_jacobian(problem, θ, i)
+        ws.residuals[i] = sqrt(_sq_norm(rᵢ))
+        qᵢ, _ = _predictive_score_penalty(rᵢ, ∂θgᵢ_w, Σ̃_θ, one(T))
+        ws.scores[i] = qᵢ
     end
+    fill!(ws.penalties, zero(eltype(ws.penalties)))
 end
 

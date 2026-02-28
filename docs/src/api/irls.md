@@ -18,9 +18,14 @@ LinearRobustProblem
 
 ## Solver
 
-```@docs
-robust_solve
+The `fit` function is the unified entry point for robust estimation. For IRLS:
+
+```julia
+result = fit(problem, MEstimator(TukeyLoss()))
+result = fit(problem, GNCEstimator())
 ```
+
+See the [RANSAC API](@ref) for the RANSAC `fit(problem, mask, weights, ::LinearFit)` method.
 
 ## Loss Functions
 

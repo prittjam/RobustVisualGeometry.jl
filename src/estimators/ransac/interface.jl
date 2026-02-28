@@ -94,10 +94,13 @@ function solve end
 """
     residuals!(r::Vector, problem::AbstractRansacProblem, model)
 
-Compute residuals for all data points given a model, writing into `r` in-place.
+Compute whitened residuals for all data points, writing into `r` in-place.
 
 `r` is pre-allocated with length `data_size(problem)`. The function must fill
-all elements. Residuals should be signed (or unsigned) scalar distances.
+all elements. Residuals MUST be whitened such that `r[i]^2` is the Mahalanobis
+distance (weighted squared residual qᵢ). For isotropic problems this is the
+signed orthogonal or Sampson distance; for heteroscedastic problems the
+whitening `r = g/√c` (dg=1) or `r = ‖L⁻¹g‖` (dg≥2) must be applied.
 """
 function residuals! end
 
@@ -197,20 +200,30 @@ Default: `true` (no consensus check). Override for problem-specific checks.
 test_consensus(::AbstractRansacProblem, _model, _mask::BitVector) = true
 
 """
-    fit(problem::AbstractRansacProblem, mask::BitVector, weights::AbstractVector, strategy::FitStrategy) -> model or nothing
+    fit(problem::AbstractRansacProblem, mask::BitVector, weights::AbstractVector, ::LinearFit) -> model or nothing
 
-Weighted least-squares fit on the subset defined by `mask` and `weights`,
-using the solver selected by `strategy`.
+Weighted least-squares fit on the subset defined by `mask` and `weights`.
 
-Used by LO-RANSAC strategies (`ConvergeThenRescore`, `StepAndRescore`)
-for iterative refit-resweep cycles. The `strategy` is resolved from
-`fit_strategy(lo)` where `lo` is the active `AbstractLocalOptimization`.
+Used by LO-RANSAC (`PosteriorIrls`) for iterative refit-resweep cycles.
 
 Default: `nothing` (problem does not support WLS fitting).
 
-See also: [`FitStrategy`](@ref), [`LinearFit`](@ref), [`fit_strategy`](@ref)
+See also: [`LinearFit`](@ref)
 """
-fit(::AbstractRansacProblem, ::BitVector, ::AbstractVector, ::FitStrategy) = nothing
+fit(::AbstractRansacProblem, ::BitVector, ::AbstractVector, ::LinearFit) = nothing
+
+"""
+    fit_param_covariance(problem::AbstractRansacProblem) -> SMatrix or nothing
+
+Return the parameter covariance shape Σ̃_θ from the most recent `fit()` call.
+
+Used by `_with_fit_cov` to wrap LO-refit models in `Uncertain{M}` for
+predictive scoring. The covariance should reflect the estimation uncertainty
+of the fitted model (e.g., from the DLT SVD workspace).
+
+Default: `nothing` (problem does not provide fit covariance).
+"""
+fit_param_covariance(::AbstractRansacProblem) = nothing
 
 """
     solver_jacobian(problem, sample_indices, model) -> NamedTuple or nothing
@@ -226,6 +239,10 @@ solver_jacobian(::AbstractRansacProblem, ::AbstractVector{Int}, _model) = nothin
 
 """
     measurement_logdets!(out, problem, model)
+
+!!! warning "Deprecated"
+    No longer called by the scoring pipeline (ℓᵢ = 0 for all problems).
+    Retained for external callers. May be removed in a future release.
 
 Compute per-point covariance penalty ℓᵢ = log|Σ̃_{gᵢ}|_{Σ_θ=0}| (Eq. 12).
 
@@ -247,25 +264,6 @@ function measurement_logdets!(out::AbstractVector, problem::AbstractRansacProble
     return out
 end
 
-"""
-    measurement_covariance(problem::AbstractRansacProblem) -> CovarianceStructure
-
-Return the measurement covariance structure trait for Σ̃_{xᵢ} (Section 3.3).
-
-This trait determines which `score!` method is dispatched for
-model-certain scoring (`MarginalQuality`):
-
-- `Homoscedastic()`:   Σ̃_{xᵢ} = I for all i (isotropic, dg=1). ℓᵢ = 0.
-- `Heteroscedastic()`: Σ̃_{xᵢ} varies per point. ℓᵢ = log|Σ̃_{gᵢ}| via
-  `residual_jacobian`.
-
-The actual per-point covariance values are NOT returned by this function —
-they are computed inside `residual_jacobian(problem, model, i)` which
-returns the whitened quantities and ℓᵢ = log|Σ̃_{gᵢ}|.
-
-Default: `Homoscedastic()`.
-"""
-measurement_covariance(::AbstractRansacProblem) = Homoscedastic()
 
 """
     residual_jacobian(problem, model, i) -> (rᵢ, ∂θgᵢ_w, ℓᵢ)
@@ -296,14 +294,6 @@ Callers needing only `(rᵢ, ∂θgᵢ_w)` can destructure as `r, G = residual_j
 Default: not implemented (will error if called without a problem-specific method).
 """
 function residual_jacobian end
-
-"""
-    constraint_type(problem::AbstractRansacProblem) -> ConstraintType
-
-Return the constraint type trait for the problem's parameterization.
-Default: `Constrained()`.
-"""
-constraint_type(::AbstractRansacProblem) = Constrained()
 
 # NOTE: SVDWorkspace and svd_nullvec! are defined in VisualGeometryCore
 # (imported at module top level) since VGC's own solvers also need them.

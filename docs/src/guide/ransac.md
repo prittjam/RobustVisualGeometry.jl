@@ -13,7 +13,7 @@ src = [SA[100.0, 200.0], SA[300.0, 150.0], ...]
 dst = [SA[112.0, 195.0], SA[310.0, 148.0], ...]
 
 problem = HomographyProblem(csponds(src, dst))
-quality = MarginalQuality(problem, 50.0)  # a = outlier half-width
+quality = MarginalScoring(problem, 50.0)  # a = outlier half-width
 result = ransac(problem, quality)
 ```
 
@@ -21,7 +21,7 @@ result = ransac(problem, quality)
 
 Quality functions score how well a model hypothesis fits the data.
 RobustVisualGeometry provides two quality functions based on Bayesian marginal
-likelihoods: `MarginalQuality` and `PredictiveMarginalQuality`. Both are
+likelihoods: `MarginalScoring` and `PredictiveMarginalScoring`. Both are
 threshold-free and scale-free.
 
 For detailed descriptions and mathematical formulas, see the
@@ -30,34 +30,28 @@ For detailed descriptions and mathematical formulas, see the
 ```julia
 # Marginal likelihood (threshold-free, scale-free)
 # Problem-aware constructor derives n, p, codimension automatically
-scoring = MarginalQuality(problem, 50.0)    # a = outlier half-width
+scoring = MarginalScoring(problem, 50.0)    # a = outlier half-width
 
 # Marginal + prediction correction (accounts for minimal-sample uncertainty)
-scoring = PredictiveMarginalQuality(problem, 50.0)
+scoring = PredictiveMarginalScoring(problem, 50.0)
 ```
 
 ## Local Optimization (LO-RANSAC)
 
 Local optimization refines promising hypotheses during the RANSAC loop via
 alternating refit-resweep cycles. Problems that support LO-RANSAC implement
-`fit(problem, mask, weights, strategy)` for weighted least-squares fitting,
-where `strategy::FitStrategy` is resolved from `fit_strategy(lo)`.
-The default strategy is `LinearFit()` (DLT via SVD or GEP/EIV).
+`fit(problem, mask, weights, ::LinearFit)` for weighted least-squares fitting.
 
 | Type | Description |
 |------|-------------|
 | `NoLocalOptimization()` | No local optimization (default) |
-| `ConvergeThenRescore()` | WLS to convergence at fixed mask, then re-sweep. Repeat. |
-| `StepAndRescore()` | Single WLS step, then re-sweep. Repeat. |
+| `PosteriorIrls()` | Posterior-weight IRLS refinement |
 
 ```julia
-# LO-RANSAC with ConvergeThenRescore (Strategy A)
+# LO-RANSAC with PosteriorIrls
 problem = HomographyProblem(csponds(src, dst))
-scoring = MarginalQuality(problem, 50.0)
-result = ransac(problem, scoring; local_optimization=ConvergeThenRescore())
-
-# LO-RANSAC with StepAndRescore (Strategy B)
-result = ransac(problem, scoring; local_optimization=StepAndRescore())
+scoring = MarginalScoring(problem, 50.0)
+result = ransac(problem, scoring; local_optimization=PosteriorIrls())
 ```
 
 Both strategies use monotonicity guards: the outer loop terminates when the

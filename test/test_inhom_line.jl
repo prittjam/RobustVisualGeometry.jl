@@ -5,8 +5,8 @@ using Random
 using ForwardDiff
 using VisualGeometryCore
 using RobustVisualGeometry
-using RobustVisualGeometry: MarginalQuality, PredictiveMarginalQuality, RansacConfig, ransac,
-    Homoscedastic, Heteroscedastic, score!, _sq_norm, RansacWorkspace,
+using RobustVisualGeometry: MarginalScoring, PredictiveMarginalScoring, RansacConfig, ransac,
+    score!, _sq_norm, RansacWorkspace,
     data_size, sample_size, model_type, residual_jacobian
 
 # =============================================================================
@@ -60,7 +60,7 @@ end
         end
     end
 
-    @testset "MarginalQuality — end-to-end" begin
+    @testset "MarginalScoring — end-to-end" begin
         rng = MersenneTwister(999)
 
         # True line: y = 5 + 2x
@@ -81,7 +81,7 @@ end
 
         prob = InhomLineFittingProblem(pts)
 
-        scoring = MarginalQuality(n, 2, 50.0; codimension=1)
+        scoring = MarginalScoring(n, 2, 50.0; codimension=1)
         config = RansacConfig(; max_trials=500, confidence=0.999)
 
         result = ransac(prob, scoring; config)
@@ -116,18 +116,18 @@ end
         pts = [SA[Float64(i), 2.0 + 3.0 * i] for i in 1:50]
         prob = InhomLineFittingProblem(pts)
 
-        # MarginalQuality(problem, a)
-        mq = MarginalQuality(prob, 50.0)
-        mq_manual = MarginalQuality(50, 2, 50.0; codimension=1)
+        # MarginalScoring(problem, a)
+        mq = MarginalScoring(prob, 50.0)
+        mq_manual = MarginalScoring(50, 2, 50.0; codimension=1)
         @test mq.log2a == mq_manual.log2a
         @test mq.model_dof == mq_manual.model_dof
         @test mq.codimension == mq_manual.codimension
         @test length(mq.perm) == length(mq_manual.perm)
         @test length(mq.lg_table) == length(mq_manual.lg_table)
 
-        # PredictiveMarginalQuality(problem, a)
-        pmq = PredictiveMarginalQuality(prob, 30.0)
-        pmq_manual = PredictiveMarginalQuality(50, 2, 30.0; codimension=1)
+        # PredictiveMarginalScoring(problem, a)
+        pmq = PredictiveMarginalScoring(prob, 30.0)
+        pmq_manual = PredictiveMarginalScoring(50, 2, 30.0; codimension=1)
         @test pmq.log2a == pmq_manual.log2a
         @test pmq.model_dof == pmq_manual.model_dof
         @test pmq.codimension == pmq_manual.codimension
@@ -141,17 +141,17 @@ end
               SA[13.0, 14.0] => SA[15.0, 16.0],
               SA[17.0, 18.0] => SA[19.0, 20.0]]
         hprob = HomographyProblem(cs)
-        hmq = MarginalQuality(hprob, 50.0)
+        hmq = MarginalScoring(hprob, 50.0)
         @test hmq.model_dof == 4  # sample_size
         @test hmq.codimension == 2
         @test length(hmq.perm) == 5
 
-        hpmq = PredictiveMarginalQuality(hprob, 50.0)
+        hpmq = PredictiveMarginalScoring(hprob, 50.0)
         @test hpmq.model_dof == 4
         @test hpmq.codimension == 2
     end
 
-    @testset "PredictiveMarginalQuality — end-to-end" begin
+    @testset "PredictiveMarginalScoring — end-to-end" begin
         rng = MersenneTwister(777)
 
         # Line y = 0 + 1x, sample at x=0 and x=0.1 (close together → ill-conditioned)
@@ -177,7 +177,7 @@ end
 
         n = length(pts)
         prob = InhomLineFittingProblem(pts)
-        scoring = PredictiveMarginalQuality(n, 2, 30.0; codimension=1)
+        scoring = PredictiveMarginalScoring(n, 2, 30.0; codimension=1)
         config = RansacConfig(; max_trials=500, confidence=0.999)
 
         result = ransac(prob, scoring; config)
@@ -186,46 +186,6 @@ end
         # Verify the mask is meaningful
         mask = result.attributes.inlier_mask
         @test sum(mask) >= 20  # at least the dense cluster
-    end
-
-    @testset "Scoring consistency: Homoscedastic ≡ Heteroscedastic when cᵢ = const" begin
-        # For InhomLineFittingProblem (dg=1, Σ̃_{xᵢ} = I), the projected scalar
-        # variance cᵢ = 1 for all i (constant). The Heteroscedastic path through
-        # residual_jacobian should produce:
-        #   qᵢ = rᵢ² (same as Homoscedastic)
-        #   ℓᵢ = 0   (same as Homoscedastic)
-        # This validates that the two paths are consistent (Section 3.3).
-
-        rng = MersenneTwister(555)
-        a_true, b_true = 3.0, -1.5
-        pts = [SA[Float64(x), a_true + b_true * x + 0.5 * randn(rng)] for x in 1:30]
-        prob = InhomLineFittingProblem(pts)
-
-        # Fit model from first two points
-        model = solve(prob, [1, 2])
-        @test !isnothing(model)
-
-        n = data_size(prob)
-        scoring = MarginalQuality(prob, 50.0)
-
-        # --- Homoscedastic path ---
-        ws_h = RansacWorkspace(n, sample_size(prob), model_type(prob))
-        score!(ws_h, prob, scoring, model, Homoscedastic())
-
-        # --- Heteroscedastic path ---
-        ws_het = RansacWorkspace(n, sample_size(prob), model_type(prob))
-        score!(ws_het, prob, scoring, model, Heteroscedastic())
-
-        # Scores qᵢ should be identical
-        @test ws_h.scores ≈ ws_het.scores atol=1e-12
-
-        # Penalties ℓᵢ should both be zero (cᵢ = 1 → log(1) = 0)
-        @test all(x -> abs(x) < 1e-12, ws_h.penalties)
-        @test all(x -> abs(x) < 1e-12, ws_het.penalties)
-
-        # Residual magnitudes should match (Heteroscedastic stores √qᵢ ≥ 0,
-        # Homoscedastic preserves signed residuals from residuals!)
-        @test abs.(ws_h.residuals) ≈ ws_het.residuals atol=1e-12
     end
 
     @testset "residual_jacobian — 3-tuple return verification" begin

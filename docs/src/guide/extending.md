@@ -29,7 +29,9 @@ function solve(p::MyProblem, sample_indices::AbstractVector{Int})
     # Return a model or FixedModels{N,M}, or nothing on failure
 end
 
-# Compute residuals for all data points given a model
+# Compute whitened residuals for all data points given a model.
+# MUST satisfy r[i]^2 = Mahalanobis distance (the whitening contract).
+# For isotropic problems (Σ_x = I), this is just the signed distance.
 function residuals!(residuals::Vector{Float64}, p::MyProblem, model)
     for i in eachindex(residuals)
         residuals[i] = compute_distance(p.data[i], model)
@@ -59,16 +61,13 @@ end
 # Number of solutions per sample (default: MultipleSolutions)
 solver_cardinality(::MyProblem) = SingleSolution()
 # Use MultipleSolutions() if solve() returns multiple models (e.g., P3P)
-
-# Measurement covariance structure (default: Homoscedastic)
-measurement_covariance(::MyProblem) = Homoscedastic()
 ```
 
 ### Usage
 
 ```julia
 problem = MyProblem(data)
-quality = MarginalQuality(problem, 50.0)
+quality = MarginalScoring(problem, 50.0)
 result = ransac(problem, quality)
 ```
 
@@ -101,5 +100,5 @@ problem_dof(p::MyRobustProblem) = size(p.A, 2)
 Then solve:
 
 ```julia
-result = robust_solve(MyRobustProblem(A, b), MEstimator(CauchyLoss()))
+result = fit(MyRobustProblem(A, b), MEstimator(CauchyLoss()))
 ```

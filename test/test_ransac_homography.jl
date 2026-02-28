@@ -239,7 +239,7 @@ end
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(problem, 50.0);
+        result = ransac(problem, MarginalScoring(problem, 50.0);
                         config=RansacConfig(max_trials=3000, min_trials=200))
 
         @test result.converged
@@ -262,7 +262,7 @@ end
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
         # L2 with tight threshold (MSAC truncation)
-        result = ransac(problem, MarginalQuality(problem, 50.0);
+        result = ransac(problem, MarginalScoring(problem, 50.0);
                         config=RansacConfig(max_trials=3000))
 
         @test result.converged
@@ -276,7 +276,7 @@ end
             n_inliers=50, n_outliers=100, noise=0.5, seed=456)
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(problem, 50.0);
+        result = ransac(problem, MarginalScoring(problem, 50.0);
                         config=RansacConfig(max_trials=5000, min_trials=500))
 
         @test result.converged
@@ -320,30 +320,13 @@ end
         @test isnothing(fit(p, mask, ones(4), LinearFit()))
     end
 
-    @testset "LO-RANSAC — ConvergeThenRescore" begin
+    @testset "LO-RANSAC — PosteriorIrls" begin
         source_pts, target_pts, H_true, n_inliers = make_homography_data(
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(problem, 50.0);
-                        local_optimization=ConvergeThenRescore(),
-                        config=RansacConfig(max_trials=3000, min_trials=200))
-
-        @test result.converged
-        H = result.value
-        test_pts = [SA[300.0, 400.0], SA[600.0, 300.0], SA[450.0, 550.0],
-                    SA[200.0, 200.0], SA[700.0, 500.0]]
-        @test max_reprojection_error(H, H_true, test_pts) < 2.0
-        @test sum(result.inlier_mask) >= n_inliers * 0.7
-    end
-
-    @testset "LO-RANSAC — StepAndRescore" begin
-        source_pts, target_pts, H_true, n_inliers = make_homography_data(
-            n_inliers=100, n_outliers=30, noise=0.5, seed=42)
-        problem = HomographyProblem(csponds(source_pts, target_pts))
-
-        result = ransac(problem, MarginalQuality(problem, 50.0);
-                        local_optimization=StepAndRescore(),
+        result = ransac(problem, MarginalScoring(problem, 50.0);
+                        local_optimization=PosteriorIrls(),
                         config=RansacConfig(max_trials=3000, min_trials=200))
 
         @test result.converged
@@ -359,7 +342,7 @@ end
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(problem, 50.0);
+        result = ransac(problem, MarginalScoring(problem, 50.0);
                         config=RansacConfig(max_trials=3000, min_trials=200))
 
         @test result.converged
@@ -374,7 +357,7 @@ end
         source_pts, target_pts, _, _ = make_homography_data()
         problem = HomographyProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(problem, 50.0);
+        result = ransac(problem, MarginalScoring(problem, 50.0);
                         config=RansacConfig(max_trials=2000))
 
         @test result isa RansacEstimate
@@ -465,7 +448,7 @@ end
         problem = HomographyProblem(scored)
         @test problem isa HomographyProblem{Float64}
 
-        result = ransac(problem, MarginalQuality(problem, 50.0);
+        result = ransac(problem, MarginalScoring(problem, 50.0);
                         config=RansacConfig(max_trials=3000, min_trials=200))
 
         @test result.converged

@@ -25,7 +25,7 @@ dst = [SA[112.0, 195.0], SA[310.0, 148.0], ...]
 
 # RANSAC with marginal likelihood scoring (threshold-free, scale-free)
 problem = HomographyProblem(csponds(src, dst))
-scoring = MarginalQuality(problem, 50.0)  # a = outlier half-width
+scoring = MarginalScoring(problem, 50.0)  # a = outlier half-width
 result = ransac(problem, scoring)
 
 H = result.value                          # 3×3 homography matrix
@@ -37,7 +37,7 @@ println("Inliers: $(sum(inliers)) / $(length(inliers))")
 
 ```julia
 problem = FundMatProblem(csponds(src, dst))
-scoring = MarginalQuality(problem, 50.0)  # a = outlier half-width
+scoring = MarginalScoring(problem, 50.0)  # a = outlier half-width
 result = ransac(problem, scoring)
 
 F = result.value                          # 3×3 fundamental matrix
@@ -46,11 +46,8 @@ F = result.value                          # 3×3 fundamental matrix
 ### LO-RANSAC (Local Optimization)
 
 ```julia
-# ConvergeThenRescore: WLS to convergence, then re-sweep
-result = ransac(problem, scoring; local_optimization=ConvergeThenRescore())
-
-# StepAndRescore: single WLS step, then re-sweep
-result = ransac(problem, scoring; local_optimization=StepAndRescore())
+# PosteriorIrls: posterior-weight IRLS refinement
+result = ransac(problem, scoring; local_optimization=PosteriorIrls())
 ```
 
 ### Robust Line Fitting
@@ -73,7 +70,7 @@ A = [1.0 0.0; 0.0 1.0; 1.0 1.0; 10.0 0.0]  # last row: outlier
 b = [1.0, 1.0, 2.0, 100.0]
 
 prob = LinearRobustProblem(A, b)
-result = robust_solve(prob, MEstimator(TukeyLoss()))
+result = fit(prob, MEstimator(TukeyLoss()))
 
 x = result.value          # estimated parameters
 w = result.weights        # final IRLS weights (outlier → 0)
@@ -109,21 +106,21 @@ AbstractRansacProblem                        RANSAC problem interface
 ├── FundMatProblem
 └── P3PProblem
 
-AbstractQualityFunction                      RANSAC quality scoring
-├── MarginalQuality                          Threshold-free marginal likelihood
-└── PredictiveMarginalQuality                Prediction-corrected variant
+AbstractScoring                      RANSAC quality scoring
+└── MarginalScoring{P}                       Scale-free marginal likelihood
+    P=Nothing  → model-certain (default)
+    P=Predictive → prediction-corrected variant
 
 AbstractLocalOptimization                    LO-RANSAC strategies
 ├── NoLocalOptimization                      No local optimization (default)
-├── ConvergeThenRescore                      WLS to convergence, then re-sweep
-└── StepAndRescore                           Single WLS step, then re-sweep
+└── PosteriorIrls                            Posterior-weight IRLS refinement
 ```
 
 ### Key design decisions
 
 - **Pluggable quality functions**: RANSAC loop is quality-agnostic via trait dispatch
-- **LO-RANSAC via `fit`**: Problems implement `fit(problem, mask, weights, strategy)` for WLS refit; LO strategies (`ConvergeThenRescore`, `StepAndRescore`) alternate refit + re-sweep
-- **Holy trait dispatch**: `SolverCardinality`, `ConstraintType`, `CovarianceStructure`, `FitStrategy` — compile-time dispatch on solver cardinality, gauge constraints, noise structure, and refit method
+- **LO-RANSAC via `fit`**: Problems implement `fit(problem, mask, weights, ::LinearFit)` for WLS refit; `PosteriorIrls` uses posterior inlier weights for iterative refinement
+- **Holy trait dispatch**: `SolverCardinality` — compile-time dispatch on solver cardinality; model uncertainty via `Uncertain{M}` type dispatch
 - **Uncertainty quantification**: Full covariance propagation through Hartley normalization
 
 ## Documentation

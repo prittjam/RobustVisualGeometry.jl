@@ -7,11 +7,11 @@ CurrentModule = RobustVisualGeometry
 ## Quality Functions
 
 ```@docs
-AbstractQualityFunction
-AbstractMarginalQuality
-MarginalQuality
-PredictiveMarginalQuality
-init_quality
+AbstractScoring
+Predictive
+MarginalScoring
+PredictiveMarginalScoring
+init_score
 default_local_optimization
 ```
 
@@ -20,16 +20,6 @@ default_local_optimization
 ```@docs
 AbstractLocalOptimization
 NoLocalOptimization
-ConvergeThenRescore
-StepAndRescore
+PosteriorIrls
 ```
 
-## Covariance Structure
-
-```@docs
-CovarianceStructure
-Homoscedastic
-Heteroscedastic
-Predictive
-covariance_structure
-```

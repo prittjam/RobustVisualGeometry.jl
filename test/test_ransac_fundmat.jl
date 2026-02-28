@@ -254,7 +254,7 @@ end
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = FundMatProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
+        result = ransac(problem, MarginalScoring(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000, min_trials=500))
 
         @test result.converged
@@ -281,7 +281,7 @@ end
             n_inliers=100, n_outliers=30, noise=0.3, seed=123)
         problem = FundMatProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
+        result = ransac(problem, MarginalScoring(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000))
 
         @test result.converged
@@ -295,7 +295,7 @@ end
             n_inliers=50, n_outliers=100, noise=0.5, seed=456)
         problem = FundMatProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
+        result = ransac(problem, MarginalScoring(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=10000, min_trials=1000))
 
         @test result.converged
@@ -311,29 +311,13 @@ end
         @test isnothing(fit(p, mask, ones(7), LinearFit()))
     end
 
-    @testset "LO-RANSAC — ConvergeThenRescore" begin
+    @testset "LO-RANSAC — PosteriorIrls" begin
         source_pts, target_pts, F_true, n_inliers = make_fundmat_data(
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = FundMatProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
-                        local_optimization=ConvergeThenRescore(),
-                        config=RansacConfig(max_trials=5000, min_trials=500))
-
-        @test result.converged
-        F = result.value
-        sv = svdvals(F)
-        @test sv[3] / sv[1] < 0.01
-        @test sum(result.inlier_mask) >= n_inliers * 0.6
-    end
-
-    @testset "LO-RANSAC — StepAndRescore" begin
-        source_pts, target_pts, F_true, n_inliers = make_fundmat_data(
-            n_inliers=100, n_outliers=30, noise=0.5, seed=42)
-        problem = FundMatProblem(csponds(source_pts, target_pts))
-
-        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
-                        local_optimization=StepAndRescore(),
+        result = ransac(problem, MarginalScoring(data_size(problem), sample_size(problem), 50.0);
+                        local_optimization=PosteriorIrls(),
                         config=RansacConfig(max_trials=5000, min_trials=500))
 
         @test result.converged
@@ -348,7 +332,7 @@ end
             n_inliers=100, n_outliers=30, noise=0.5, seed=42)
         problem = FundMatProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
+        result = ransac(problem, MarginalScoring(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000, min_trials=500))
 
         @test result.converged
@@ -360,7 +344,7 @@ end
         source_pts, target_pts, _, _ = make_fundmat_data()
         problem = FundMatProblem(csponds(source_pts, target_pts))
 
-        result = ransac(problem, MarginalQuality(data_size(problem), sample_size(problem), 50.0);
+        result = ransac(problem, MarginalScoring(data_size(problem), sample_size(problem), 50.0);
                         config=RansacConfig(max_trials=5000))
 
         @test result isa RansacEstimate

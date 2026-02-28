@@ -5,7 +5,7 @@
 # Robust estimation algorithms extracted from VisualGeometryCore:
 # - M-estimation (IRLS) with pluggable loss functions
 # - Graduated Non-Convexity (GNC) for high outlier rates
-# - RANSAC with pluggable quality functions and LO-RANSAC refinement
+# - RANSAC with pluggable scoring functions and LO-RANSAC refinement
 # - Problem implementations: lines, conics, homographies, F-matrices, P3P
 #
 # Depends on VisualGeometryCore for geometry types, solvers, losses, and scale
@@ -15,7 +15,7 @@
 
 module RobustVisualGeometry
 
-using LinearAlgebra: LinearAlgebra, Diagonal, I, cond, norm, svd, dot,
+using LinearAlgebra: LinearAlgebra, Diagonal, I, cond, norm, dot,
                      eigen, Symmetric, diag, det
 using StaticArrays: StaticArrays, SVector, SMatrix, MVector, @SMatrix, SA
 using StructArrays: StructArrays
@@ -29,8 +29,7 @@ using Random: Random
 # Types
 using VisualGeometryCore: Point2, Line2D, Ellipse, Uncertain,
                           Attributed, AbstractAttributes,
-                          HomEllipseMat, CameraModel,
-                          EuclideanMap, Pose3,
+                          HomEllipseMat, CameraModel, Pose3,
                           HomographyMat, FundMat,
                           FixedModels
 
@@ -52,7 +51,6 @@ using VisualGeometryCore: normal, param_cov, sign_normalize,
                           enforce_rank_two,
                           hartley_normalization, hartley_unnormalize,
                           backproject,
-                          jac_det,
                           sampson_whitened, sampson_logdets!
 
 # Solvers
@@ -73,8 +71,7 @@ import VisualGeometryCore: rho, psi, weight,           # GNC extends these
                            test_model                    # RANSAC problems extend this
 
 # Import non-exported VGC symbols
-import VisualGeometryCore: RotMatrix,
-                           _corrected_scale,
+import VisualGeometryCore: _corrected_scale,
                            _homography_sample_nondegenerate,
                            _vec9_to_mat33,
                            projection_transform
@@ -111,7 +108,7 @@ export IRLSWorkspace
 # 3. M-ESTIMATORS - IRLS-based estimators
 # -----------------------------------------------------------------------------
 export MEstimator, LinearRobustProblem
-export robust_solve
+# fit is exported in section 6 (RANSAC) — same function, multiple dispatch
 
 # -----------------------------------------------------------------------------
 # 4. GNC ESTIMATORS - Graduated Non-Convexity
@@ -131,22 +128,21 @@ export coef, residuals, weights, scale, converged, niter
 # 6. RANSAC - Random Sample Consensus
 # -----------------------------------------------------------------------------
 export AbstractRansacProblem, FixedModels
-export AbstractQualityFunction
-export AbstractMarginalQuality, MarginalQuality, PredictiveMarginalQuality
-export AbstractLocalOptimization, NoLocalOptimization, ConvergeThenRescore, StepAndRescore
+export AbstractScoring
+export Predictive, MarginalScoring, PredictiveMarginalScoring
+export AbstractLocalOptimization, NoLocalOptimization, PosteriorIrls
 export default_local_optimization
-export FitStrategy, LinearFit, fit_strategy
+export LinearFit
 export AbstractSampler, UniformSampler, ProsacSampler, sampler
 export RansacConfig, RansacEstimate, RansacAttributes
-export residual_jacobian, solver_jacobian, measurement_logdets!, model_covariance
-export init_quality
+export residual_jacobian, solver_jacobian, measurement_logdets!, fit_param_covariance
+export init_score
 export ransac, inlier_ratio, codimension
 export SVDWorkspace, svd_nullvec!
 
 # RANSAC problem interface methods
 export sample_size, model_type, solve, residuals!, test_sample, test_model
 export fit, solver_cardinality, draw_sample!, test_consensus
-export constraint_type
 
 # -----------------------------------------------------------------------------
 # 7. CONIC FITTING - Algebraic, Taubin, FNS, Robust FNS, Lifted FNS, Geometric
@@ -193,7 +189,8 @@ export FMatTaubinProblem, FMatFNSProblem, FMatFitResult
 include("interface.jl")
 include("gep.jl")
 
-# Estimators — IRLS and GNC (peer to RANSAC)
+# Estimators — IRLS framework and concrete methods
+include("estimators/irls_framework.jl")
 include("estimators/irls.jl")
 include("estimators/gnc.jl")
 

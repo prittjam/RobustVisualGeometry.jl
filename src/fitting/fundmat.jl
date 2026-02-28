@@ -5,9 +5,9 @@
 # Robust fundamental matrix estimation via Taubin→FNS, mirroring the conic
 # fitting pipeline in conic_fitting.jl.
 #
-#   fit_fundmat                   - RANSAC (composable quality + LO)
-#   fit_fundmat_robust_taubin     - Taubin + IRLS via robust_solve
-#   fit_fundmat_robust_fns        - FNS + IRLS via robust_solve
+#   fit_fundmat                   - RANSAC (composable scoring + LO)
+#   fit_fundmat_robust_taubin     - Taubin + IRLS via fit
+#   fit_fundmat_robust_fns        - FNS + IRLS via fit
 #   fit_fundmat_robust_taubin_fns - Two-phase: Robust Taubin → Robust FNS
 #
 # Epipolar constraint: dᵀ F s = 0  where s = T₁[u₁; 1], d = T₂[u₂; 1]
@@ -165,13 +165,7 @@ Unweighted Taubin: M = Σ ξᵢξᵢᵀ, N = Σ JᵢJᵢᵀ, smallest GEP + rank
 function _fmat_taubin_seed(xis::Vector{SVector{9,Float64}},
                             Lambdas::Vector{SMatrix{9,9,Float64,81}},
                             Js::Vector{SMatrix{9,4,Float64,36}})
-    M = zeros(SMatrix{9,9,Float64,81})
-    N = zeros(SMatrix{9,9,Float64,81})
-    @inbounds for i in 1:length(xis)
-        M += xis[i] * xis[i]'
-        N += Js[i] * Js[i]'
-    end
-    _fmat_project_rank2(_solve_smallest_gep(M, N))
+    _fmat_project_rank2(_taubin_seed_gep(xis, Js))
 end
 
 # =============================================================================
@@ -310,7 +304,7 @@ function fit_fundmat_robust_taubin(correspondences;
     u1, u2 = _extract_correspondences(correspondences)
     T1, T2, xis, Lambdas, Js = _fmat_prepare(u1, u2, Float64(sigma))
     prob = FMatTaubinProblem(xis, Lambdas, Js)
-    result = robust_solve(prob, MEstimator(loss);
+    result = fit(prob, MEstimator(loss);
                           scale=_scale_estimator(scale), max_iter, rtol)
     _finalize_fmat_result(result, T1, T2, u1, u2, Float64(sigma))
 end
@@ -338,7 +332,7 @@ function fit_fundmat_robust_fns(correspondences;
     u1, u2 = _extract_correspondences(correspondences)
     T1, T2, xis, Lambdas, Js = _fmat_prepare(u1, u2, Float64(sigma))
     prob = FMatFNSProblem(xis, Lambdas, Js)
-    result = robust_solve(prob, MEstimator(loss);
+    result = fit(prob, MEstimator(loss);
                           scale=_scale_estimator(scale), max_iter, rtol)
     _finalize_fmat_result(result, T1, T2, u1, u2, Float64(sigma))
 end
@@ -376,14 +370,14 @@ function fit_fundmat_robust_taubin_fns(correspondences;
     T1, T2, xis, Lambdas, Js = _fmat_prepare(u1, u2, Float64(sigma))
     prob_taubin = FMatTaubinProblem(xis, Lambdas, Js)
     prob_fns = FMatFNSProblem(xis, Lambdas, Js)
-    result = robust_solve(prob_taubin, MEstimator(loss);
+    result = fit(prob_taubin, MEstimator(loss);
                           scale=_scale_estimator(scale), max_iter=max_iter_taubin, rtol,
                           refine=prob_fns, refine_max_iter=max_iter_fns)
     _finalize_fmat_result(result, T1, T2, u1, u2, Float64(sigma))
 end
 
 """
-    fit_fundmat(correspondences; quality=nothing,
+    fit_fundmat(correspondences; scoring=nothing,
         config=RansacConfig(), outlier_halfwidth=50.0)
 
 Robust fundamental matrix estimation via 7-point RANSAC with scale-free
@@ -397,28 +391,28 @@ For post-RANSAC polishing, use the standalone functions:
 - `fit_fundmat_robust_taubin_fns` — Two-phase Taubin → FNS
 
 # Arguments
-- `quality`: Quality function for model selection.
-  Default: `MarginalQuality(problem, outlier_halfwidth)`.
+- `scoring`: Quality function for model selection.
+  Default: `MarginalScoring(problem, outlier_halfwidth)`.
 - `config`: RANSAC loop configuration.
 - `outlier_halfwidth`: Half-width of the outlier domain (parameter `a` in Eq. 12).
-  Only used when `quality` is not provided.
+  Only used when `scoring` is not provided.
 
 # Examples
 ```julia
 result = fit_fundmat(correspondences)
 
-# Custom quality
-quality = PredictiveMarginalQuality(length(correspondences), 7, 30.0; codimension=2)
-result = fit_fundmat(correspondences; quality)
+# Custom scoring
+scoring = PredictiveMarginalScoring(length(correspondences), 7, 30.0; codimension=2)
+result = fit_fundmat(correspondences; scoring)
 ```
 """
 function fit_fundmat(correspondences;
-    quality::Union{AbstractQualityFunction, Nothing} = nothing,
+    scoring::Union{AbstractScoring, Nothing} = nothing,
     config::RansacConfig = RansacConfig(),
     outlier_halfwidth::Real = 50.0)
 
     prob = FundMatProblem(correspondences)
-    scoring = something(quality, MarginalQuality(prob, Float64(outlier_halfwidth)))
+    scoring = something(scoring, MarginalScoring(prob, Float64(outlier_halfwidth)))
     ransac(prob, scoring; config)
 end
 

@@ -52,14 +52,8 @@ Unweighted Taubin solve: build M = Σ ξᵢξᵢᵀ, N = Σ JᵢJᵢᵀ, solve s
 Shared by `ConicTaubinProblem.initial_solve` and `ConicFNSProblem.initial_solve`.
 """
 function _taubin_seed(xis::Vector{SVector{6,Float64}})
-    M = zeros(SMatrix{6,6,Float64,36})
-    N = zeros(SMatrix{6,6,Float64,36})
-    @inbounds for i in 1:length(xis)
-        M += xis[i] * xis[i]'
-        J = conic_carrier_jacobian(xis[i][4], xis[i][5])
-        N += J * J'
-    end
-    _solve_smallest_gep(M, N)
+    Js = [conic_carrier_jacobian(xis[i][4], xis[i][5]) for i in 1:length(xis)]
+    _taubin_seed_gep(xis, Js)
 end
 
 """
