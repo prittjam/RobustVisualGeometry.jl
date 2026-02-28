@@ -62,6 +62,6 @@ ellipse = conic_to_ellipse(result.value, result.scale)
 ## Next Steps
 
 - [Architecture](architecture.md) — understand the type hierarchy
-- [RANSAC](ransac.md) — quality functions, local optimization, stopping criteria
+- [RANSAC](ransac.md) — scoring functions, local optimization, stopping criteria
 - [Fitting Algorithms](fitting.md) — conic, line, homography, F-matrix fitting
 - [Extending](extending.md) — implement your own RANSAC problem

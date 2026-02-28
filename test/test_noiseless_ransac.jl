@@ -5,6 +5,7 @@ using LinearAlgebra
 
 using VisualGeometryCore
 using RobustVisualGeometry
+import RobustVisualGeometry: _p_all_inliers
 
 # =============================================================================
 # Helper: generate noiseless fundamental matrix correspondences + outliers
@@ -67,6 +68,14 @@ function make_homography_data(rng, H_true, n_inliers, n_outliers)
         push!(cs, s => d)
     end
     return cs
+end
+
+"""Theoretical trial count from hypergeometric model at given confidence."""
+function theoretical_trials(n_inliers, n_total, k, confidence)
+    p = _p_all_inliers(n_inliers, n_total, k)
+    p ≈ 0 && return Inf
+    p ≈ 1 && return 1.0
+    ceil(Int, log(1 - confidence) / log(1 - p))
 end
 
 # =============================================================================
@@ -168,8 +177,15 @@ end
             end
             @test max_inlier_residual < 1e-8
 
+            # Trial count should match hypergeometric theory (clamped by min_trials)
+            T_theory = theoretical_trials(n_in, n_in + n_out, sample_size(problem),
+                                          config.confidence)
+            T_expected = max(config.min_trials, T_theory)
+            @test result.trials <= T_expected
+
             println("  H $label: rel_err=$(round(rel_err, sigdigits=3)), " *
-                    "inliers=$n_found/$n_in, max_res=$(round(max_inlier_residual, sigdigits=3))")
+                    "inliers=$n_found/$n_in, max_res=$(round(max_inlier_residual, sigdigits=3)), " *
+                    "trials=$(result.trials)/$(T_expected)")
         end
     end
 end
@@ -226,9 +242,16 @@ end
             end
             @test max_epipolar < 1e-4
 
+            # Trial count should match hypergeometric theory (clamped by min/max_trials)
+            T_theory = theoretical_trials(n_in, n_in + n_out, sample_size(problem),
+                                          config.confidence)
+            T_expected = clamp(T_theory, config.min_trials, config.max_trials)
+            @test result.trials <= T_expected
+
             println("  F $label: inliers=$n_found/$n_in, " *
                     "max_sampson=$(round(max_inlier_sampson, sigdigits=3)), " *
-                    "max_epipolar=$(round(max_epipolar, sigdigits=3))")
+                    "max_epipolar=$(round(max_epipolar, sigdigits=3)), " *
+                    "trials=$(result.trials)/$(T_expected)")
         end
     end
 end

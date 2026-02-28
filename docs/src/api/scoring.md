@@ -4,7 +4,7 @@
 CurrentModule = RobustVisualGeometry
 ```
 
-## Quality Functions
+## Scoring Functions
 
 ```@docs
 AbstractScoring

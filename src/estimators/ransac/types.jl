@@ -131,12 +131,10 @@ mutable struct RansacWorkspace{K, M, T<:AbstractFloat}
     # Scoring buffers (length = data_size)
     residuals::Vector{T}
     scores::Vector{T}
-    penalties::Vector{T}
     mask::BitVector
     # Best-so-far (mutated in-place)
     best_model::M
     best_residuals::Vector{T}
-    best_scores::Vector{T}
     best_mask::BitVector
     # Sampling buffer (length = sample_size, statically sized)
     sample_indices::MVector{K,Int}
@@ -149,10 +147,8 @@ function RansacWorkspace(n::Int, k::Int, ::Type{M}, ::Type{T}=Float64) where {M,
     RansacWorkspace{k,M,T}(
         Vector{T}(undef, n),
         Vector{T}(undef, n),
-        zeros(T, n),
         falses(n),
         Ref{M}()[],
-        Vector{T}(undef, n),
         Vector{T}(undef, n),
         falses(n),
         MVector{k,Int}(undef),

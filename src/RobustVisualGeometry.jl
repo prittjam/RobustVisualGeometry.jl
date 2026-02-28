@@ -19,7 +19,7 @@ using LinearAlgebra: LinearAlgebra, Diagonal, I, cond, norm, dot,
                      eigen, Symmetric, diag, det
 using StaticArrays: StaticArrays, SVector, SMatrix, MVector, @SMatrix, SA
 using StructArrays: StructArrays
-using FixedSizeArrays: FixedSizeArrays, FixedSizeArray
+using FixedSizeArrays: FixedSizeArray
 using Random: Random
 
 # =============================================================================

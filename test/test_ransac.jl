@@ -171,8 +171,7 @@ end
                          0.008, 0.025, 0.012, 0.018, 0.022,
                          100.0, 200.0, 150.0, 300.0, 250.0]
 
-        penalties = zeros(Float64, n)
-        best_S, best_k = RobustVisualGeometry.sweep!(scoring, losses, penalties, n)
+        best_S, best_k = RobustVisualGeometry.sweep!(scoring, losses, n)
         # Should identify k*=10 (the 10 small residuals)
         @test best_k == 10
         @test best_S > -Inf

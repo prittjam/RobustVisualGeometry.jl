@@ -60,26 +60,21 @@ codimension(::FundMatProblem) = 1  # d_g = 1: one scalar epipolar constraint
 model_type(::FundMatProblem{T}) where T = FundMat{T}
 solver_cardinality(::FundMatProblem) = MultipleSolutions()
 
-solve(p::FundMatProblem{T}, idx::AbstractVector{Int}) where T =
-    fundmat_7pt(p.cs, idx, T)
-
-residuals!(r::Vector, p::FundMatProblem{T}, F::FundMat{T}) where T =
-    sampson_distances!(r, F, p.cs)
+# Inline indexing to call the 14-arg solver directly — avoids heap-boxing
+# the Union{Nothing, FixedModels} return across the non-inlined VGC wrapper.
+function solve(p::FundMatProblem{T}, idx::AbstractVector{Int}) where T
+    u1 = p.cs.first; u2 = p.cs.second
+    @inbounds fundmat_7pt(
+        u1[idx[1]], u1[idx[2]], u1[idx[3]], u1[idx[4]],
+        u1[idx[5]], u1[idx[6]], u1[idx[7]],
+        u2[idx[1]], u2[idx[2]], u2[idx[3]], u2[idx[4]],
+        u2[idx[5]], u2[idx[6]], u2[idx[7]], T)
+end
 
 # No pre-solve degeneracy check: the 7pt solver detects true degeneracy via
 # SVD kernel dimension. Collinearity checks on C(7,3)=35 triplets per image
 # reject ~75% of valid all-inlier samples (matching SuperANSAC's approach).
 test_sample(::FundMatProblem, ::AbstractVector{Int}) = true
 
-test_model(p::FundMatProblem{T}, F::FundMat{T}, idx::AbstractVector{Int}) where T =
-    test_model(F, p.cs, idx)
-
-# =============================================================================
-# fit — Weighted DLT for LO-RANSAC
-# =============================================================================
-
-function fit(p::FundMatProblem, mask::BitVector, weights::AbstractVector, ::LinearFit)
-    sum(mask) < 8 && return nothing
-    fundmat_dlt!(p._dlt_buf, p.cs.first, p.cs.second;
-                             mask, weights, svd_ws=p._svd_ws)
-end
+# DLT solver dispatch for AbstractDltProblem shared fit()
+_dlt_solver!(::FundMatProblem, args...; kw...) = fundmat_dlt!(args...; kw...)

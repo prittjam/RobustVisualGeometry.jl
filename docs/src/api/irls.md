@@ -25,7 +25,7 @@ result = fit(problem, MEstimator(TukeyLoss()))
 result = fit(problem, GNCEstimator())
 ```
 
-See the [RANSAC API](@ref) for the RANSAC `fit(problem, mask, weights, ::LinearFit)` method.
+See the [RANSAC](@ref) page for the RANSAC `fit(problem, mask, weights, ::LinearFit)` method.
 
 ## Loss Functions
 

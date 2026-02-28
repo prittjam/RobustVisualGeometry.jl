@@ -79,6 +79,31 @@ function _make_cspond_problem(::Type{P}, correspondences::AbstractVector,
         SVDWorkspace{T}(n_rows, 9))
 end
 
+# =============================================================================
+# Shared DLT Methods — defaults for AbstractDltProblem subtypes
+# =============================================================================
+
+# Delegates to VGC's test_model(model, cs, idx).
+# Subtypes using non-Sampson model tests should override.
+test_model(p::AbstractDltProblem, model, idx::AbstractVector{Int}) =
+    test_model(model, p.cs, idx)
+
+# Delegates to VGC's sampson_distances!(r, model, cs).
+residuals!(r::Vector, p::AbstractDltProblem, model) =
+    sampson_distances!(r, model, p.cs)
+
+# Weighted DLT refit for LO-RANSAC.
+# Subtypes must implement _dlt_solver!(::SubType, buf, u1, u2; kw...).
+function fit(p::AbstractDltProblem, mask::BitVector, weights::AbstractVector, ::LinearFit)
+    sum(mask) < sample_size(p) + 1 && return nothing
+    _dlt_solver!(p, p._dlt_buf, p.cs.first, p.cs.second;
+                 mask, weights, svd_ws=p._svd_ws)
+end
+
+# =============================================================================
+# Shared Constructor Helpers
+# =============================================================================
+
 function _build_cspond(correspondences::AbstractVector, sample_sz::Int)
     n = length(correspondences)
     c₁ = first(correspondences)

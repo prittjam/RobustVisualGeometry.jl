@@ -1,6 +1,6 @@
 # RANSAC
 
-The RANSAC implementation is fully modular: quality functions, local optimization strategies,
+The RANSAC implementation is fully modular: scoring functions, local optimization strategies,
 and samplers can all be swapped independently.
 
 ## Basic Usage
@@ -13,14 +13,14 @@ src = [SA[100.0, 200.0], SA[300.0, 150.0], ...]
 dst = [SA[112.0, 195.0], SA[310.0, 148.0], ...]
 
 problem = HomographyProblem(csponds(src, dst))
-quality = MarginalScoring(problem, 50.0)  # a = outlier half-width
-result = ransac(problem, quality)
+scoring = MarginalScoring(problem, 50.0)  # a = outlier half-width
+result = ransac(problem, scoring)
 ```
 
-## Quality Functions
+## Scoring Functions
 
-Quality functions score how well a model hypothesis fits the data.
-RobustVisualGeometry provides two quality functions based on Bayesian marginal
+Scoring functions score how well a model hypothesis fits the data.
+RobustVisualGeometry provides two scoring functions based on Bayesian marginal
 likelihoods: `MarginalScoring` and `PredictiveMarginalScoring`. Both are
 threshold-free and scale-free.
 
@@ -73,7 +73,7 @@ config = RansacConfig(;
     max_trials=1000,
     confidence=0.999,
 )
-result = ransac(problem, quality; config=config)
+result = ransac(problem, scoring; config=config)
 ```
 
 ## Result Type

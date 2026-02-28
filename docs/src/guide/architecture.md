@@ -49,16 +49,16 @@ AbstractRansacProblem                        RANSAC problem interface
 RANSAC problems implement: `sample_size`, `data_size`, `model_type`, `codimension`,
 `solve`, `residuals!`, and optionally `test_sample`, `test_model`, `fit`.
 
-### Quality Functions
+### Scoring Functions
 
 ```
-AbstractScoring                      RANSAC quality scoring
+AbstractScoring                      RANSAC scoring
 └── MarginalScoring{P}                       Scale-free marginal likelihood
     P=Nothing  → model-certain (default)
     P=Predictive → prediction-corrected variant
 ```
 
-Quality functions score model hypotheses. `MarginalScoring{Nothing}` and
+Scoring functions score model hypotheses. `MarginalScoring{Nothing}` and
 `MarginalScoring{Predictive}` (aliased as `PredictiveMarginalScoring`) use
 Bayesian marginal likelihoods for automatic threshold and scale selection.
 

@@ -118,7 +118,7 @@ AbstractLocalOptimization                    LO-RANSAC strategies
 
 ### Key design decisions
 
-- **Pluggable quality functions**: RANSAC loop is quality-agnostic via trait dispatch
+- **Pluggable scoring functions**: RANSAC loop is scoring-agnostic via dispatch
 - **LO-RANSAC via `fit`**: Problems implement `fit(problem, mask, weights, ::LinearFit)` for WLS refit; `PosteriorIrls` uses posterior inlier weights for iterative refinement
 - **Holy trait dispatch**: `SolverCardinality` — compile-time dispatch on solver cardinality; model uncertainty via `Uncertain{M}` type dispatch
 - **Uncertainty quantification**: Full covariance propagation through Hartley normalization

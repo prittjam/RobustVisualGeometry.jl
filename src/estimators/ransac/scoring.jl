@@ -83,40 +83,37 @@ end
 # =============================================================================
 
 """
-    _posterior_weights!(w, scores, perm, k, d_g, log2a)
+    _posterior_weights!(w, scores, perm, k, dg, m, log2a)
 
-Compute posterior inlier probabilities from per-point Mahalanobis scores.
+Posterior inlier probabilities (Eq. w-post-refit).
 
-Given the current partition (perm[1:k] = inliers), estimates σ² from
-inlier RSS, then for each point computes the posterior probability of
-being an inlier under a Gaussian-vs-Uniform mixture:
+Given the sweep partition (perm[1:k] = inliers), estimates the scale
+ŝ² = RSS_I / ν from inlier RSS with ν = (k−m)·dg effective DOF,
+then for each point computes the posterior inlier probability under
+the Gaussian-vs-Uniform mixture:
 
-    w[i] = p(inlier | qᵢ) = 1 / (1 + exp(log_pout - log_pin))
+    wᵢ = p_in(rᵢ; ŝ) / (p_in(rᵢ; ŝ) + p_out)
 
-where log_pin = -(d_g/2) log(2πσ²) - qᵢ/(2σ²) and
-log_pout = -d_g log(2a).
-
-Uses the MLE ŝ² = RSS/(k·d_g) rather than the unbiased estimator
-RSS/((k-p)·d_g) because ŝ² is the mode of the inverse-gamma posterior
-on σ² under the Jeffreys prior π(σ²) ∝ 1/σ², consistent with the
-marginal likelihood derivation.
+where p_in(rᵢ; ŝ) = (2π ŝ²)^{-dg/2} exp(−‖rᵢ‖²/(2ŝ²)) and
+p_out = (2a)^{-dg}.
 """
 function _posterior_weights!(w::AbstractVector{T}, scores::AbstractVector{T},
                               perm::Vector{Int}, k::Int,
-                              d_g::Int, log2a::Float64) where T
-    # Estimate σ² from inlier RSS — MLE (mode of inverse-gamma posterior)
+                              dg::Int, m::Int, log2a::Float64) where T
+    # ŝ² = RSS_I / ν, where ν = (k−m)·dg  (Eq. 12 DOF)
     RSS = zero(T)
     @inbounds for j in 1:k
         RSS += scores[perm[j]]
     end
-    σ² = RSS / (k * d_g)
-    σ² = max(σ², eps(T))
+    ν = (k - m) * dg
+    ŝ² = RSS / T(ν)
+    ŝ² = max(ŝ², eps(T))
 
-    log_norm = -T(d_g) / 2 * log(2 * T(π) * σ²)
-    log_pout = -T(d_g) * T(log2a)
+    log_pin_norm = -T(dg) / 2 * log(2 * T(π) * ŝ²)
+    log_pout = -T(dg) * T(log2a)
 
     @inbounds for i in eachindex(w)
-        log_pin = log_norm - scores[i] / (2 * σ²)
+        log_pin = log_pin_norm - scores[i] / (2 * ŝ²)
         w[i] = one(T) / (one(T) + exp(log_pout - log_pin))
     end
     nothing
@@ -135,14 +132,14 @@ end
 # MarginalScoring never wraps → zero overhead.
 #
 # All residuals!() implementations return whitened residuals such that
-# r² = Mahalanobis distance. The two score! methods:
+# ‖rᵢ‖² = Mahalanobis distance. The two score! methods:
 #
-#   model::M (certain)     → qᵢ = rᵢ²
-#   model::Uncertain{M}   → qᵢ = rᵢ²/ṽᵢ (predictive variance inflation)
+#   model::M (certain)     → scores[i] = rᵢ²
+#   model::Uncertain{M}   → scores[i] = rᵢᵀ Ṽᵢ⁻¹ rᵢ  (predictive variance)
 #
 # ℓᵢ = 0 for both: the outlier density is defined in the whitened constraint
-# space r_i = L⁻¹g_i (where LLᵀ = Σ̃_{gᵢ}), giving
-# p_out(g_i) = (2a)^{-d_g} |Σ̃_{gᵢ}|^{-1/2}. The Jacobian
+# space rᵢ = Lᵢ⁻¹gᵢ (where LᵢLᵢᵀ = Σ̃_{gᵢ}), giving
+# p_out(gᵢ) = (2a)^{-dg} |Σ̃_{gᵢ}|^{-1/2}. The Jacobian
 # |Σ̃_{gᵢ}|^{-1/2} cancels with the identical factor from the inlier
 # Gaussian normalization, so ℓᵢ = 0.
 # -----------------------------------------------------------------------------
@@ -179,20 +176,22 @@ Parameterized by `P`:
 
 The score marginalizes σ² under the Jeffreys prior π(σ²) ∝ 1/σ²:
 
-    S(θ, I) = log Γ(nᵢ dg/2) − (nᵢ dg/2) log(π RSS_I) − nₒ dg log(2a)
+    S(θ, I) = log Γ((nᵢ·dg − n_θ)/2) − ((nᵢ·dg − n_θ)/2) log(π·RSS_I) − nₒ·dg·log(2a)
 
-where nᵢ = |I|, RSS_I = Σᵢ∈I qᵢ, nₒ = N − nᵢ, a is the outlier domain
-half-width, and dg the codimension.
+where nᵢ = |I|, RSS_I = Σᵢ∈I rᵢ², nₒ = N − nᵢ, n_θ = m·dg (model parameters),
+a is the outlier domain half-width, and dg the codimension.
 
-Per-point scores qᵢ = gᵢᵀ Σ̃_{gᵢ}⁻¹ gᵢ, where Σ̃_{gᵢ} includes model
-uncertainty for the predictive variant.
+Per-point scores ‖rᵢ‖² = gᵢᵀ Σ̃_{gᵢ}⁻¹ gᵢ, where rᵢ = Lᵢ⁻¹gᵢ is the
+shape-whitened residual. For the predictive variant, Σ̃_{gᵢ} includes
+model estimation uncertainty.
 
 # Fields
 - `log2a::Float64`: log(2a), precomputed outlier penalty per point
 - `model_dof::Int`: Minimal sample size m = ⌈n_θ/dg⌉
 - `codimension::Int`: Codimension dg of the model manifold
 - `perm::Vector{Int}`: Pre-allocated sortperm buffer (mutated by `sweep!`)
-- `lg_table::Vector{Float64}`: Precomputed log Γ(k·dg/2) for k = 1..N
+- `lg_table::Vector{Float64}`: Precomputed log Γ(k·dg/2) for k = 1..N; indexed as lg_table[k−m] in sweep!
+- `scratch::Vector{Int}`: Pre-allocated scratch buffer for `sortperm!` (eliminates per-call allocation)
 """
 mutable struct MarginalScoring{P} <: AbstractScoring
     log2a::Float64
@@ -200,6 +199,7 @@ mutable struct MarginalScoring{P} <: AbstractScoring
     codimension::Int
     perm::Vector{Int}
     lg_table::Vector{Float64}
+    scratch::Vector{Int}       # pre-allocated scratch for sortperm!
 end
 
 """
@@ -248,7 +248,7 @@ end
 function MarginalScoring{P}(n::Int, p::Int, a::Float64; codimension::Int=1) where P
     a > 0 || throw(ArgumentError("outlier_halfwidth must be positive, got $a"))
     lg = _build_lg_table(n, codimension)
-    MarginalScoring{P}(log(2a), p, codimension, Vector{Int}(undef, n), lg)
+    MarginalScoring{P}(log(2a), p, codimension, Vector{Int}(undef, n), lg, Vector{Int}(undef, n))
 end
 
 # Bare MarginalScoring(n, p, a) defaults to model-certain
@@ -309,49 +309,50 @@ _score_improved(::MarginalScoring, new, old) = new[2] > old[2]
 # =============================================================================
 
 """
-    sweep!(perm, lg_table, model_dof, log2a, dg, scores, penalties, n) -> (S*, k*)
+    sweep!(perm, lg_table, model_dof, log2a, dg, scores, n) -> (S*, k*)
 
 Sort-and-sweep computation of the scale-free marginal score (Algorithm 1, Eq. 12).
 
-Sorts per-point weighted squared residuals qᵢ = gᵢᵀ Σ̃_{gᵢ}⁻¹ gᵢ, then sweeps
-prefixes k = m+1,...,N evaluating (Eq. 12):
+Sorts per-point squared whitened residuals rᵢ², then sweeps prefixes
+k = m+1,...,N evaluating (Eq. 12):
 
-    S = log Γ(k·dg/2) − (k·dg/2) log(π·RSS_I) − ½L − (N−k)·dg·log(2a)
+    S = log Γ(ν/2) − (ν/2) log(π·RSS_I) − (N−k)·dg·log(2a)
 
-where RSS_I = Σ_{j=1}^k q_{(j)} (weighted residual sum of squares),
-L = Σ_{j=1}^k ℓ_{(j)} (accumulated covariance penalty, ℓᵢ = log|Σ̃_{gᵢ}|),
-and lg_table[k] = log Γ(k·dg/2) (precomputed inlier reward).
+where ν = (k−m)·dg is the effective DOF (k·dg constraints minus n_θ = m·dg
+model parameters), RSS_I = Σ_{j=1}^k r²_{(j)}, and lg_table[k−m] = log Γ((k−m)·dg/2).
 
 Returns the best score S* and optimal inlier count k*. O(N log N) time.
 
-The four terms of S (Section 3.2):
-  1. Inlier reward:      log Γ(k·dg/2)
-  2. Fit quality:        −(k·dg/2) log(π·RSS_I)
-  3. Covariance penalty: −½L
-  4. Outlier penalty:    −(N−k)·dg·log(2a)
+The three terms of S (Section 3.2):
+  1. Inlier reward:   log Γ(ν/2)
+  2. Fit quality:     −(ν/2) log(π·RSS_I)
+  3. Outlier penalty: −(N−k)·dg·log(2a)
 
 Mutates `perm` via `sortperm!`.
 """
 function sweep!(perm::Vector{Int}, lg_table::Vector{Float64},
-                          model_dof::Int, log2a::Float64, d_g::Int,
-                          scores::Vector{T}, penalties::Vector{T},
-                          n::Int) where T
-    sortperm!(perm, scores)
-    p = model_dof
-    d2 = T(d_g) / 2
-    d_g_T = T(d_g)
-    log_pi = T(log(π))
+                          model_dof::Int, log2a::Float64, dg::Int,
+                          scores::Vector{T},
+                          n::Int;
+                          scratch::Union{Nothing,Vector{Int}}=nothing) where T
+    if isnothing(scratch)
+        sortperm!(perm, scores)
+    else
+        sortperm!(perm, scores; scratch)
+    end
+    m = model_dof
+    dg_T = T(dg)
     RSS = zero(T)
-    L = zero(T)
     best_S = typemin(T)
     best_k = 0
     @inbounds for k in 1:n
         idx = perm[k]
         RSS += scores[idx]
-        L += penalties[idx]
-        k <= p && continue
+        k <= m && continue                          # need k > m for positive DOF
         RSS = max(RSS, eps(T))
-        S = lg_table[k] - d2 * k * (log_pi + log(RSS)) - T(0.5) * L - (n - k) * d_g_T * log2a
+        ν = dg_T * (k - m)                           # effective DOF = k·dg − n_θ
+        ν_half = ν / 2
+        S = lg_table[k - m] - ν_half * log(T(π) * RSS) - (n - k) * dg_T * T(log2a)
         if S > best_S
             best_S = S
             best_k = k
@@ -361,8 +362,9 @@ function sweep!(perm::Vector{Int}, lg_table::Vector{Float64},
 end
 
 # Dispatch wrapper for all MarginalScoring{P} variants
-sweep!(s::MarginalScoring, scores::Vector{T}, penalties::Vector{T}, n::Int) where T =
-    sweep!(s.perm, s.lg_table, s.model_dof, s.log2a, s.codimension, scores, penalties, n)
+sweep!(s::MarginalScoring, scores::Vector{T}, n::Int) where T =
+    sweep!(s.perm, s.lg_table, s.model_dof, s.log2a, s.codimension, scores, n;
+           scratch=s.scratch)
 
 # =============================================================================
 # Model Covariance Wrapping — Uncertain{M} construction
@@ -411,45 +413,46 @@ _plain_model(m::Uncertain) = m.value
 _plain_model(m) = m
 
 # =============================================================================
-# _predictive_score_penalty — Per-point (q_i, log_v_i) with model covariance
+# _predictive_score_penalty — Per-point (‖rᵢ‖², ℓᵢ) with model covariance
 # =============================================================================
 
 """
-    _predictive_score_penalty(rᵢ::T, ∂θgᵢ_w::SVector{n_θ,T}, Σ̃_θ, s2) -> (qᵢ, ℓᵢ_model)
+    _predictive_score_penalty(rᵢ::T, ∂θgᵢ_w::SVector{n_θ,T}, Σ̃_θ, s2) -> (rᵢ², ℓᵢ)
 
 Model-uncertain score and penalty for scalar constraint (dg=1, Appendix D).
 
 In whitened coordinates (rᵢ = gᵢ/√cᵢ, ∂θgᵢ_w = ∂θgᵢ/√cᵢ):
-  Σ̃_w = s² + (∂θgᵢ_w)ᵀ Σ̃_θ (∂θgᵢ_w)    (scalar prediction variance shape)
-  qᵢ = rᵢ² / Σ̃_w                          (weighted squared residual)
-  ℓᵢ_model = log(Σ̃_w)                      (model uncertainty contribution)
+  Ṽᵢ = s² + (∂θgᵢ_w)ᵀ Σ̃_θ (∂θgᵢ_w)    (scalar prediction variance shape)
+  rᵢ² / Ṽᵢ                                (predictive squared residual)
+  ℓᵢ = log(Ṽᵢ)                            (model uncertainty contribution)
 """
 @inline function _predictive_score_penalty(rᵢ::T, ∂θgᵢ_w::SVector{n_θ,T},
                                             Σ̃_θ, s2) where {n_θ,T}
-    Σ̃_w = s2 + dot(∂θgᵢ_w, Σ̃_θ * ∂θgᵢ_w)
-    Σ̃_w > eps(T) || return (typemax(T), zero(T))
-    return (rᵢ^2 / Σ̃_w, log(Σ̃_w))
+    Ṽᵢ = s2 + dot(∂θgᵢ_w, Σ̃_θ * ∂θgᵢ_w)
+    Ṽᵢ > eps(T) || return (typemax(T), zero(T))
+    r²ᵢ = rᵢ^2 / Ṽᵢ
+    return (r²ᵢ, log(Ṽᵢ))
 end
 
 """
     _predictive_score_penalty(rᵢ::SVector{dg,T}, ∂θgᵢ_w::SMatrix{dg,n_θ,T}, Σ̃_θ, s2)
-        -> (qᵢ, ℓᵢ_model)
+        -> (‖rᵢ‖², ℓᵢ)
 
 Model-uncertain Mahalanobis score and penalty for vector constraint
 (dg≥2, Eq. 7, Appendix D).
 
-In whitened coordinates (rᵢ = L⁻¹gᵢ, ∂θgᵢ_w = L⁻¹∂θgᵢ):
-  Σ̃_w = s²I + (∂θgᵢ_w) Σ̃_θ (∂θgᵢ_w)ᵀ    (dg×dg prediction covariance shape)
-  qᵢ = rᵢᵀ Σ̃_w⁻¹ rᵢ                       (weighted squared residual)
-  ℓᵢ_model = log|Σ̃_w|                       (model uncertainty contribution)
+In whitened coordinates (rᵢ = Lᵢ⁻¹gᵢ, ∂θgᵢ_w = Lᵢ⁻¹∂θgᵢ):
+  Ṽᵢ = s²I + (∂θgᵢ_w) Σ̃_θ (∂θgᵢ_w)ᵀ    (dg×dg prediction covariance shape)
+  rᵢᵀ Ṽᵢ⁻¹ rᵢ                             (predictive Mahalanobis distance)
+  ℓᵢ = log|Ṽᵢ|                             (model uncertainty contribution)
 """
 @inline function _predictive_score_penalty(rᵢ::SVector{dg,T}, ∂θgᵢ_w::SMatrix{dg,n_θ,T},
                                             Σ̃_θ, s2) where {dg,n_θ,T}
-    Σ̃_w = s2 * SMatrix{dg,dg,T}(I) + ∂θgᵢ_w * Σ̃_θ * ∂θgᵢ_w'
-    det_Σ̃_w = det(Σ̃_w)
-    det_Σ̃_w > eps(T) || return (typemax(T), zero(T))
-    qᵢ = dot(rᵢ, Σ̃_w \ rᵢ)
-    return (qᵢ, log(det_Σ̃_w))
+    Ṽᵢ = s2 * SMatrix{dg,dg,T}(I) + ∂θgᵢ_w * Σ̃_θ * ∂θgᵢ_w'
+    det_Ṽᵢ = det(Ṽᵢ)
+    det_Ṽᵢ > eps(T) || return (typemax(T), zero(T))
+    r²ᵢ = dot(rᵢ, Ṽᵢ \ rᵢ)
+    return (r²ᵢ, log(det_Ṽᵢ))
 end
 
 # =============================================================================
@@ -476,11 +479,11 @@ end
 # score! — Type-dispatched per-point scoring (Section 3.3)
 # =============================================================================
 #
-# All residuals!() implementations return whitened residuals such that
-# r² = Mahalanobis distance. Two methods dispatch on model type:
+# All residuals!() implementations return whitened residuals rᵢ such that
+# ‖rᵢ‖² = Mahalanobis distance. Two methods dispatch on model type:
 #
-#   model::M (certain)     → qᵢ = rᵢ²
-#   model::Uncertain{M}   → qᵢ = rᵢ²/ṽᵢ (predictive variance inflation)
+#   model::M (certain)     → scores[i] = rᵢ²
+#   model::Uncertain{M}   → scores[i] = rᵢᵀ Ṽᵢ⁻¹ rᵢ  (predictive)
 #
 # ℓᵢ = 0 for both: the outlier density is defined in whitened space,
 # so covariance factors cancel.
@@ -489,13 +492,13 @@ end
 """
     _sq_norm(r) -> T
 
-Squared norm: `r²` for scalar, `rᵀr` for vector. Computes the weighted
-squared residual qᵢ from whitened residuals (Eq. 12).
+Squared norm: `rᵢ²` for scalar, `rᵢᵀrᵢ` for vector. Computes ‖rᵢ‖²
+from the shape-whitened residual (Table 2).
 """
 @inline _sq_norm(r::Real) = r * r
 @inline _sq_norm(r::SVector) = dot(r, r)
 
-# --- Model-certain: qᵢ = rᵢ², ℓᵢ = 0 ---
+# --- Model-certain: scores[i] = rᵢ², ℓᵢ = 0 ---
 # Fast path: whitened residuals from residuals!, no Jacobians needed.
 function score!(ws, problem, ::MarginalScoring, model)
     n = data_size(problem)
@@ -503,10 +506,9 @@ function score!(ws, problem, ::MarginalScoring, model)
     @inbounds for i in 1:n
         ws.scores[i] = ws.residuals[i]^2
     end
-    fill!(ws.penalties, zero(eltype(ws.penalties)))
 end
 
-# --- Model-uncertain: qᵢ = rᵢ²/ṽᵢ, ℓᵢ = 0 ---
+# --- Model-uncertain: scores[i] = rᵢᵀ Ṽᵢ⁻¹ rᵢ, ℓᵢ = 0 ---
 # Model uncertainty inflates prediction variance via Σ̃_θ from
 # the Uncertain{M} wrapper (not from ws.sample_indices).
 function score!(ws::RansacWorkspace{<:Any,M,T}, problem,
@@ -518,9 +520,8 @@ function score!(ws::RansacWorkspace{<:Any,M,T}, problem,
     @inbounds for i in 1:n
         rᵢ, ∂θgᵢ_w, _ = residual_jacobian(problem, θ, i)
         ws.residuals[i] = sqrt(_sq_norm(rᵢ))
-        qᵢ, _ = _predictive_score_penalty(rᵢ, ∂θgᵢ_w, Σ̃_θ, one(T))
-        ws.scores[i] = qᵢ
+        r²ᵢ, _ = _predictive_score_penalty(rᵢ, ∂θgᵢ_w, Σ̃_θ, one(T))
+        ws.scores[i] = r²ᵢ
     end
-    fill!(ws.penalties, zero(eltype(ws.penalties)))
 end
 

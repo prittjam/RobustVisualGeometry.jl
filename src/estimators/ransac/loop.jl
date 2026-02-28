@@ -22,8 +22,8 @@
 
 RANSAC with predictive marginal scoring (Algorithm 2, Appendix A).
 
-For each minimal sample, fits θₜ, computes per-point scores qᵢ and penalties
-ℓᵢ, then calls the sort-and-sweep (Algorithm 1) to find the optimal partition.
+For each minimal sample, fits θₜ, computes per-point scores qᵢ, then calls
+the sort-and-sweep (Algorithm 1) to find the optimal partition.
 Two independent best-so-far scores are maintained: S_gl gates entry into local
 optimization; S_lo tracks the best locally optimized score. The adaptive trial
 count uses the hypergeometric distribution (Appendix A, stopping criterion).
@@ -131,7 +131,6 @@ function _update_best!(ws::RansacWorkspace, model)
     ws.best_model = model
     ws.has_best = true
     copyto!(ws.best_residuals, ws.residuals)
-    copyto!(ws.best_scores, ws.scores)
     copyto!(ws.best_mask, ws.mask)
     nothing
 end
@@ -194,7 +193,7 @@ and set the inlier mask via `mask!`.  Returns the score and inlier count.
 function _score_and_sweep!(ws, problem, scoring, model)
     n = data_size(problem)
     score!(ws, problem, scoring, model)
-    s, k = sweep!(scoring, ws.scores, ws.penalties, n)
+    s, k = sweep!(scoring, ws.scores, n)
     mask!(ws, scoring.perm, k)
     (s, k)
 end
@@ -241,7 +240,7 @@ function init_state(method::PosteriorIrlsMethod{S,K,M,T}, problem, θ₀) where 
 
     # Compute posterior weights from the sweep partition
     w = Vector{T}(undef, n)
-    _posterior_weights!(w, ws.scores, scoring.perm, k, scoring.codimension, scoring.log2a)
+    _posterior_weights!(w, ws.scores, scoring.perm, k, scoring.codimension, scoring.model_dof, scoring.log2a)
 
     PosteriorIrlsState{M,T}(w, θ₀, score, score)
 end
@@ -273,7 +272,7 @@ function update_weights!(state::PosteriorIrlsState{M,T}, method::PosteriorIrlsMe
     ws = method.ws
     scoring = method.scoring
     k = sum(ws.mask)
-    _posterior_weights!(state.w, ws.scores, scoring.perm, k, scoring.codimension, scoring.log2a)
+    _posterior_weights!(state.w, ws.scores, scoring.perm, k, scoring.codimension, scoring.model_dof, scoring.log2a)
 end
 
 function post_step!(state::PosteriorIrlsState, method::PosteriorIrlsMethod, prob, θ, iter)
@@ -318,10 +317,8 @@ Each inlier contributes `d_g` scalar constraint equations, so RSS is a sum of
 `n_in * d_g` squared terms. The degrees of freedom are `ν = n_in * d_g - n_θ`
 where `n_θ = model_dof * d_g`.
 
-Note: this uses the *unbiased* estimator RSS/ν (dividing by n-p) for the
-user-facing scale output, unlike `_posterior_weights!` which uses the MLE
-RSS/(n·d_g) for internal posterior computation (the mode of the inverse-gamma
-posterior under the Jeffreys prior).
+Both this function and `_posterior_weights!` use the same DOF
+ν = (n_in − m)·dg, consistent with Eq. 12.
 """
 function _inlier_scale_and_weights(residuals::AbstractVector{T},
                                     mask::BitVector, model_dof::Int,

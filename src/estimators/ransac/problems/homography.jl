@@ -60,26 +60,20 @@ model_type(::HomographyProblem{T}) where T = HomographyMat{T}
 solver_cardinality(::HomographyProblem) = SingleSolution()
 codimension(::HomographyProblem) = 2  # d_g = 2: two constraint equations from v̄ = λHū
 
-solve(p::HomographyProblem, idx::AbstractVector{Int}) = homography_4pt(p.cs, idx)
-
-residuals!(r::Vector, p::HomographyProblem{T}, H::HomographyMat{T}) where T =
-    sampson_distances!(r, H, p.cs)
+# Inline indexing to call the 8-arg solver directly — avoids heap-boxing
+# the Union{Nothing, HomographyMat} return across the non-inlined VGC wrapper.
+function solve(p::HomographyProblem, idx::AbstractVector{Int})
+    u1 = p.cs.first; u2 = p.cs.second
+    @inbounds homography_4pt(
+        u1[idx[1]], u1[idx[2]], u1[idx[3]], u1[idx[4]],
+        u2[idx[1]], u2[idx[2]], u2[idx[3]], u2[idx[4]])
+end
 
 test_sample(p::HomographyProblem, idx::AbstractVector{Int}) =
     _homography_sample_nondegenerate(p.cs, idx)
 
-test_model(p::HomographyProblem{T}, H::HomographyMat{T}, idx::AbstractVector{Int}) where T =
-    test_model(H, p.cs, idx)
-
-# =============================================================================
-# fit — Weighted DLT for LO-RANSAC
-# =============================================================================
-
-function fit(p::HomographyProblem, mask::BitVector, weights::AbstractVector, ::LinearFit)
-    sum(mask) < 5 && return nothing
-    homography_dlt!(p._dlt_buf, p.cs.first, p.cs.second;
-                     mask, weights, svd_ws=p._svd_ws)
-end
+# DLT solver dispatch for AbstractDltProblem shared fit()
+_dlt_solver!(::HomographyProblem, args...; kw...) = homography_dlt!(args...; kw...)
 
 # =============================================================================
 # Solver Jacobian — Forward Homography Only

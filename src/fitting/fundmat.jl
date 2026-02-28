@@ -391,7 +391,7 @@ For post-RANSAC polishing, use the standalone functions:
 - `fit_fundmat_robust_taubin_fns` — Two-phase Taubin → FNS
 
 # Arguments
-- `scoring`: Quality function for model selection.
+- `scoring`: Scoring function for model selection.
   Default: `MarginalScoring(problem, outlier_halfwidth)`.
 - `config`: RANSAC loop configuration.
 - `outlier_halfwidth`: Half-width of the outlier domain (parameter `a` in Eq. 12).

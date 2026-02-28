@@ -11,7 +11,7 @@ Robust line fitting via RANSAC with scale-free marginal scoring.
 Returns a `RansacEstimate`.
 
 # Arguments
-- `scoring`: Quality function for model selection.
+- `scoring`: Scoring function for model selection.
   Default: `MarginalScoring(problem, outlier_halfwidth)`.
 - `config`: RANSAC loop configuration.
 - `outlier_halfwidth`: Half-width of the outlier domain (parameter `a` in Eq. 12).

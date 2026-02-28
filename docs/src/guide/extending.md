@@ -67,8 +67,8 @@ solver_cardinality(::MyProblem) = SingleSolution()
 
 ```julia
 problem = MyProblem(data)
-quality = MarginalScoring(problem, 50.0)
-result = ransac(problem, quality)
+scoring = MarginalScoring(problem, 50.0)
+result = ransac(problem, scoring)
 ```
 
 ## Implementing a Custom Robust Problem
